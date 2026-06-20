@@ -1,0 +1,26 @@
+services:
+  garminsync:
+    build: .
+    container_name: garminsync
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:8010:8010"
+    volumes:
+      - garminsync_data:/app/data
+      - garminsync_logs:/app/logs
+      - garminsync_runtime:/app/runtime
+    restart: unless-stopped
+    init: true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/api/status', timeout=5)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    stop_grace_period: 30s
+
+volumes:
+  garminsync_data:
+  garminsync_logs:
+  garminsync_runtime:

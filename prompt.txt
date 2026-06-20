@@ -1,0 +1,1290 @@
+Tu es développeur fullstack senior, orienté architecture propre, sécurité, intégration API, Python/FastAPI, Docker, tests automatisés, robustesse des flux de synchronisation et manipulation prudente de données santé.
+
+Je veux créer une nouvelle application appelée `GarminSyncWeight`.
+
+Objectif général
+
+Je veux créer une passerelle propre entre ma balance Withings Body Cardio / Body Cardio+ et Garmin Connect.
+
+Ma balance Withings envoie déjà mes données de poids et de composition corporelle vers l’application Withings, puis éventuellement vers Apple Santé. Je veux éviter de dépendre d’Apple Santé, car Garmin Connect ne semble pas importer proprement les données Apple Santé vers Garmin.
+
+J’ai déjà un connecteur Garmin MCP fonctionnel avec accès en lecture à mes données Garmin et des endpoints d’écriture disponibles. Je veux maintenant créer un système qui récupère automatiquement les mesures Withings, les normalise, vérifie qu’elles ne sont pas déjà présentes dans Garmin, puis prépare une écriture Garmin uniquement si elles sont nouvelles, cohérentes et validées.
+
+Point critique : dans cette première version, aucune écriture réelle dans Garmin ne doit être faite. Le mode dry-run doit être obligatoire par défaut.
+
+Contexte local Windows
+
+Mon projet existant `GarminToGPT`, qui sert de référence d’architecture, est présent localement sur ma machine Windows ici :
+
+```text
+C:\Users\domin\Desktop\Garmin-MCP
+```
+
+Le nouveau projet à créer doit s’appeler `GarminSyncWeight` et doit être placé ici :
+
+```text
+C:\Users\domin\Desktop\GarminSyncWeight
+```
+
+Consignes importantes sur les chemins :
+
+* Utilise `C:\Users\domin\Desktop\Garmin-MCP` comme source locale de référence pour analyser l’architecture existante de GarminToGPT.
+* Ne modifie pas directement le projet GarminToGPT sauf si je te le demande explicitement.
+* Crée le nouveau projet dans `C:\Users\domin\Desktop\GarminSyncWeight`.
+* Reprends les bonnes conventions de GarminToGPT : structure backend/frontend, Docker, logs, scripts, `.env.example`, documentation, sécurité, redaction des secrets, séparation `data/logs/runtime`.
+* Le nouveau projet doit rester autonome.
+* Si tu as besoin de réutiliser du code ou des patterns de GarminToGPT, recopie/adapte uniquement ce qui est pertinent dans GarminSyncWeight au lieu de créer une dépendance fragile entre les deux projets.
+
+Pipeline cible
+
+Le pipeline fonctionnel attendu est :
+
+```text
+Withings API
+→ OAuth2 Withings
+→ récupération des mesures poids/composition
+→ parsing des groupes de mesures
+→ normalisation des unités
+→ modèle interne canonique
+→ mapping prudent Withings vers Garmin
+→ lecture des données Garmin existantes
+→ anti-doublon Garmin
+→ détection des conflits
+→ dry-run détaillé obligatoire
+→ rapport de synchronisation
+→ écriture Garmin contrôlée uniquement après validation explicite dans une future étape
+→ logs structurés
+→ tests automatisés
+```
+
+Endpoints Garmin disponibles
+
+Le connecteur Garmin MCP existe déjà et dispose d’endpoints de lecture et d’écriture.
+
+Endpoints Garmin pertinents :
+
+Lecture :
+
+* `get_weigh_ins`
+* `get_daily_weigh_ins`
+* `get_body_composition`
+
+Écriture :
+
+* `add_weigh_in`
+* `add_weigh_in_with_timestamps`
+* `add_body_composition`
+
+Important :
+
+* Ne jamais appeler `delete_weigh_ins`.
+* Ne pas créer de route, bouton, fonction ou tâche automatique qui supprime des données Garmin.
+* Toute suppression est explicitement hors scope.
+* L’écriture Garmin doit être désactivée par défaut.
+* Le premier livrable doit être un dry-run complet.
+* Aucun appel d’écriture Garmin ne doit être effectué dans la première version.
+
+Endpoint Garmin cible prioritaire
+
+La fonction Garmin cible prioritaire pour une future écriture est :
+
+```python
+add_body_composition(
+    date,
+    weight,
+    percent_fat,
+    percent_hydration,
+    visceral_fat_mass,
+    bone_mass,
+    muscle_mass,
+    basal_met,
+    active_met,
+    physique_rating,
+    metabolic_age,
+    visceral_fat_rating,
+    bmi
+)
+```
+
+Règles :
+
+* Utiliser `add_body_composition` uniquement si on a au minimum `date` + `weight` et au moins une donnée de composition corporelle fiable.
+* Utiliser `add_weigh_in_with_timestamps` uniquement si on veut écrire seulement le poids avec horodatage précis.
+* Utiliser `add_weigh_in` seulement en dernier recours.
+* Ne jamais écrire de données approximatives ou inférées à tort.
+* Les champs non fiables, absents ou ambigus doivent rester `null`.
+
+Phase 0 — Audit obligatoire avant modification
+
+Avant d’écrire ou modifier du code, fais un audit du projet local GarminToGPT situé ici :
+
+```text
+C:\Users\domin\Desktop\Garmin-MCP
+```
+
+Puis crée le nouveau projet autonome GarminSyncWeight dans :
+
+```text
+C:\Users\domin\Desktop\GarminSyncWeight
+```
+
+Ne modifie pas GarminToGPT directement. Utilise-le comme référence d’architecture, de conventions et de patterns techniques.
+
+Tu dois :
+
+1. Inspecter la structure du dépôt GarminToGPT.
+2. Identifier les conventions existantes :
+
+   * organisation backend ;
+   * organisation frontend ;
+   * configuration ;
+   * logs ;
+   * scripts ;
+   * Dockerfile ;
+   * docker-compose ;
+   * `.env.example` ;
+   * `.gitignore` ;
+   * tests ;
+   * docs ;
+   * pattern de redaction des secrets.
+3. Identifier les composants réutilisables pour GarminSyncWeight :
+
+   * gestion des logs ;
+   * endpoint de statut ;
+   * stockage local ;
+   * structure FastAPI ;
+   * scripts PowerShell/Bash ;
+   * Docker ;
+   * conventions de fichiers ;
+   * sécurité ;
+   * séparation `data/logs/runtime`.
+4. Produire un court rapport d’audit avant de proposer les modifications.
+
+Ne commence pas par coder sans avoir présenté le plan.
+
+Phase 1 — Décision d’architecture
+
+Propose puis implémente une architecture propre.
+
+Compare brièvement deux options :
+
+Option A — Microservice séparé recommandé :
+
+* nouveau projet dédié `GarminSyncWeight` ;
+* backend FastAPI ;
+* éventuellement frontend local minimal ;
+* stockage local SQLite ;
+* Docker compatible ;
+* logs dédiés ;
+* réutilisation des conventions GarminToGPT ;
+* pas de dépendance directe au projet GarminToGPT.
+
+Option B — Module intégré dans GarminToGPT :
+
+* ajout d’un module `withings_sync` dans le projet existant ;
+* réutilisation directe de l’UI et du backend existants ;
+* risque de mélanger deux responsabilités.
+
+Je préfère a priori l’option A : microservice autonome `GarminSyncWeight`, sauf si tu identifies une vraie raison technique de l’intégrer directement.
+
+Le système doit pouvoir tourner :
+
+* localement sur Windows 11 ;
+* dans Docker ;
+* dans un conteneur LXC Docker/Dockge sur Proxmox ;
+* avec variables d’environnement ;
+* sans secrets dans GitHub.
+
+Structure de fichiers souhaitée
+
+Crée une structure proche de celle-ci, en l’adaptant si nécessaire :
+
+```text
+C:\Users\domin\Desktop\GarminSyncWeight\
+  backend/
+    app/
+      main.py
+      config.py
+      logging_config.py
+      security.py
+      cli.py
+      models/
+        withings.py
+        garmin.py
+        sync.py
+      services/
+        withings_auth.py
+        withings_client.py
+        withings_parser.py
+        garmin_client.py
+        mapper.py
+        deduplicator.py
+        sync_engine.py
+        report_builder.py
+      api/
+        routes_status.py
+        routes_auth.py
+        routes_sync.py
+        routes_logs.py
+      storage/
+        db.py
+        token_store.py
+        sync_store.py
+      tests/
+        test_mapping.py
+        test_units.py
+        test_dedup.py
+        test_dry_run.py
+        test_security.py
+        fixtures/
+          withings_getmeas_weight_only.json
+          withings_getmeas_body_composition.json
+          garmin_empty.json
+          garmin_duplicate.json
+          garmin_conflict.json
+  frontend/
+    ...
+  scripts/
+    dev.ps1
+    start.ps1
+    test.ps1
+    dry-run.ps1
+  docs/
+    architecture.md
+    security.md
+    mapping_withings_garmin.md
+    dry_run_report_example.md
+  data/
+    .gitkeep
+  logs/
+    .gitkeep
+  runtime/
+    .gitkeep
+    reports/
+      .gitkeep
+  Dockerfile
+  docker-compose.yml
+  .env.example
+  .gitignore
+  README.md
+  pyproject.toml
+```
+
+Ne crée pas de complexité inutile. Si un frontend complet est prématuré, crée seulement :
+
+* backend FastAPI ;
+* endpoints locaux ;
+* CLI dry-run ;
+* documentation ;
+* tests.
+
+Le frontend peut venir plus tard.
+
+Phase 2 — Authentification Withings
+
+Implémente ou prépare proprement l’authentification Withings OAuth2.
+
+Créer un module :
+
+```text
+backend/app/services/withings_auth.py
+```
+
+À faire :
+
+1. Utiliser OAuth2 Authorization Code Flow.
+2. Créer une route locale :
+
+```text
+GET /api/withings/auth/start
+```
+
+Cette route doit :
+
+* générer l’URL d’autorisation Withings ;
+* inclure `client_id`, `redirect_uri`, `scope`, `response_type=code`, `state` ;
+* stocker temporairement le `state` pour validation.
+
+3. Créer une route locale :
+
+```text
+GET /api/withings/auth/callback
+```
+
+Cette route doit :
+
+* recevoir `code` et `state` ;
+* vérifier le `state` ;
+* échanger le code contre `access_token` et `refresh_token` ;
+* stocker les tokens localement.
+
+4. Stocker les tokens dans SQLite ou fichier JSON sécurisé dans `data/`.
+5. Ne jamais stocker les tokens dans le code.
+6. Ne jamais logger les tokens.
+7. Ajouter une redaction automatique de :
+
+   * `access_token` ;
+   * `refresh_token` ;
+   * `client_secret` ;
+   * header `Authorization` ;
+   * cookies ;
+   * emails éventuels.
+8. Gérer le renouvellement automatique du token :
+
+   * si token expiré ou proche expiration ;
+   * appel refresh ;
+   * remplacement atomique de l’ancien token ;
+   * conservation de `expires_at`.
+9. Gérer les erreurs :
+
+   * token expiré ;
+   * refresh échoué ;
+   * scope insuffisant ;
+   * callback invalide ;
+   * state invalide ;
+   * client secret manquant.
+
+Variables d’environnement à prévoir :
+
+```env
+WITHINGS_CLIENT_ID=
+WITHINGS_CLIENT_SECRET=
+WITHINGS_REDIRECT_URI=http://127.0.0.1:8010/api/withings/auth/callback
+WITHINGS_SCOPE=user.metrics
+APP_BASE_URL=http://127.0.0.1:8010
+APP_HOST=127.0.0.1
+APP_PORT=8010
+DATA_DIR=./data
+LOG_DIR=./logs
+RUNTIME_DIR=./runtime
+APP_TIMEZONE=Europe/Paris
+USER_HEIGHT_M=
+DRY_RUN_DEFAULT=true
+ENABLE_GARMIN_WRITES=false
+FIRST_WRITE_CONFIRMATION_REQUIRED=true
+WEIGHT_DUPLICATE_EPSILON_KG=0.05
+WEIGHT_CONFLICT_EPSILON_KG=0.2
+GARMIN_LOOKBACK_DAYS=7
+GARMIN_LOOKAHEAD_DAYS=1
+WITHINGS_PER_DAY_STRATEGY=latest_per_day
+```
+
+Permissions Withings :
+
+* Demander uniquement le minimum nécessaire.
+* Le scope principal attendu est `user.metrics`.
+* Ne demande pas `user.activity`, `user.info` ou autres scopes sans justification technique explicite.
+* Vérifie la documentation actuelle Withings avant d’implémenter définitivement les endpoints et scopes.
+
+Phase 3 — Récupération des données Withings
+
+Créer un client Withings propre :
+
+```text
+backend/app/services/withings_client.py
+```
+
+Endpoint Withings à utiliser :
+
+* API Measure / `getmeas`.
+
+Important :
+
+* Vérifie la documentation actuelle Withings avant implémentation finale.
+* Ne suppose pas les types de mesures.
+* Les types ci-dessous sont des hypothèses documentaires à confirmer dans le code et la documentation.
+
+Types de mesure à gérer prudemment :
+
+* `1` : poids en kg ;
+* `5` : fat free mass / masse maigre en kg ;
+* `6` : fat ratio / pourcentage de masse grasse ;
+* `8` : fat mass weight / masse grasse en kg ;
+* `76` : muscle mass / masse musculaire en kg ;
+* `77` : hydration / hydratation, probablement en kg selon les réponses ;
+* `88` : bone mass / masse osseuse en kg ;
+* autres types éventuellement disponibles à documenter mais ne pas mapper sans validation.
+
+Règles de parsing :
+
+* Withings renvoie souvent des mesures sous forme de groupes `measuregrps`.
+* Chaque groupe peut contenir plusieurs mesures.
+* Chaque mesure peut contenir `type`, `value`, `unit`.
+* La valeur réelle doit être reconstruite par :
+
+```python
+real_value = value * (10 ** unit)
+```
+
+* Le parser doit gérer correctement les unités négatives.
+* Le parser doit conserver la réponse brute dans le modèle interne pour audit.
+* Les timestamps doivent être traités proprement.
+* La timezone doit être explicite, par défaut `Europe/Paris`, configurable via `APP_TIMEZONE`.
+* La date Garmin doit être dérivée de façon stable à partir du timestamp local.
+* Gérer si disponibles :
+
+  * `grpid`
+  * `date`
+  * `created`
+  * `modified`
+  * `attrib`
+  * `category`
+  * `deviceid`
+* Ne pas écraser ou fusionner deux mesures du même jour sans stratégie claire.
+
+Créer un modèle interne canonique.
+
+Exemple :
+
+```python
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Literal, Any
+from pydantic import BaseModel
+
+class WithingsRawMeasure(BaseModel):
+    measure_group_id: str | None = None
+    date_utc: datetime
+    date_local: datetime
+    timezone: str
+    category: int | None = None
+    attrib: int | None = None
+    device_id: str | None = None
+    raw_measures: list[dict[str, Any]]
+    raw_group: dict[str, Any]
+
+class BodyCompositionMeasurement(BaseModel):
+    source: Literal["withings"] = "withings"
+    source_measure_group_id: str | None = None
+    source_device_id: str | None = None
+    measured_at_utc: datetime
+    measured_at_local: datetime
+    garmin_date: date
+
+    weight_kg: Decimal | None = None
+    fat_percent: Decimal | None = None
+    fat_mass_kg: Decimal | None = None
+    fat_free_mass_kg: Decimal | None = None
+    muscle_mass_kg: Decimal | None = None
+    bone_mass_kg: Decimal | None = None
+    hydration_mass_kg: Decimal | None = None
+    hydration_percent: Decimal | None = None
+    bmi: Decimal | None = None
+
+    visceral_fat_mass: Decimal | None = None
+    basal_met: Decimal | None = None
+    active_met: Decimal | None = None
+    physique_rating: int | None = None
+    metabolic_age: int | None = None
+    visceral_fat_rating: int | None = None
+
+    raw: dict[str, Any]
+    warnings: list[str] = []
+```
+
+Règles :
+
+* Ne pas inventer de données.
+* Ne pas calculer de champs Garmin si l’interprétation est douteuse.
+* Ne calculer l’IMC que si la taille utilisateur est disponible de manière fiable via configuration explicite `USER_HEIGHT_M`.
+* Ne pas calculer `basal_met`, `active_met`, `physique_rating`, `metabolic_age`, `visceral_fat_rating` sans source Withings directe confirmée.
+* Ne pas convertir automatiquement `hydration_mass_kg` en `percent_hydration` sauf si la formule est explicitement validée.
+* Si hydratation est fournie en kg et Garmin attend un pourcentage, laisser `percent_hydration=null` au départ et signaler dans le rapport.
+
+Phase 4 — Mapping Withings vers Garmin
+
+Créer :
+
+```text
+backend/app/services/mapper.py
+docs/mapping_withings_garmin.md
+```
+
+Mapping prudent initial :
+
+```text
+Garmin date
+← date locale dérivée du timestamp Withings, timezone configurable.
+Statut : certain si timestamp Withings valide.
+
+Garmin weight
+← Withings type 1, poids kg.
+Statut : certain si type 1 présent.
+
+Garmin percent_fat
+← Withings type 6, fat ratio / pourcentage de masse grasse.
+Statut : à confirmer contre documentation et données réelles, mais probablement compatible.
+
+Garmin bone_mass
+← Withings type 88, bone mass kg.
+Statut : à confirmer, probablement compatible.
+
+Garmin muscle_mass
+← Withings type 76, muscle mass kg.
+Statut : à confirmer, probablement compatible.
+
+Garmin bmi
+← calculable uniquement si USER_HEIGHT_M est défini explicitement.
+Formule : weight_kg / height_m².
+Statut : calculé, pas source directe Withings.
+Par défaut : null si taille absente.
+
+Garmin percent_hydration
+← Withings type 77 semble être hydratation en kg, pas nécessairement un pourcentage.
+Statut : ambigu.
+Par défaut : null.
+Ne pas convertir automatiquement.
+
+Garmin visceral_fat_mass
+← null par défaut.
+Ne pas mapper tant que Withings ne fournit pas une donnée explicitement compatible.
+
+Garmin basal_met
+← null par défaut.
+Ne pas mapper sans donnée directe fiable.
+
+Garmin active_met
+← null par défaut.
+Ne pas mapper sans donnée directe fiable.
+
+Garmin physique_rating
+← null par défaut.
+Ne pas mapper sans donnée directe fiable.
+
+Garmin metabolic_age
+← null par défaut.
+Ne pas mapper sans donnée directe fiable.
+
+Garmin visceral_fat_rating
+← null par défaut.
+Ne pas mapper sans donnée directe fiable.
+```
+
+Le mapper doit produire :
+
+* un objet `GarminBodyCompositionCandidate` ;
+* une liste des champs écrits ;
+* une liste des champs ignorés ;
+* une liste des champs absents ;
+* une liste des champs non mappés par prudence ;
+* une liste de warnings.
+
+Modèle Garmin candidat :
+
+```python
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Any
+from pydantic import BaseModel
+
+class GarminBodyCompositionCandidate(BaseModel):
+    date: date
+    measured_at_local: datetime | None = None
+
+    weight: Decimal | None = None
+    percent_fat: Decimal | None = None
+    percent_hydration: Decimal | None = None
+    visceral_fat_mass: Decimal | None = None
+    bone_mass: Decimal | None = None
+    muscle_mass: Decimal | None = None
+    basal_met: Decimal | None = None
+    active_met: Decimal | None = None
+    physique_rating: int | None = None
+    metabolic_age: int | None = None
+    visceral_fat_rating: int | None = None
+    bmi: Decimal | None = None
+
+    source: str = "withings"
+    source_measure_group_id: str | None = None
+    source_device_id: str | None = None
+    idempotency_key: str
+
+    mapped_fields: dict[str, Any] = {}
+    ignored_fields: dict[str, Any] = {}
+    null_fields: list[str] = []
+    mapping_warnings: list[str] = []
+```
+
+L’idempotency key doit être stable, par exemple :
+
+```text
+withings:{source_measure_group_id}:{garmin_date}:{weight_kg}
+```
+
+Si `source_measure_group_id` est absent, utiliser une clé déterministe à partir de :
+
+* source ;
+* timestamp mesuré ;
+* date Garmin ;
+* poids ;
+* device_id si disponible.
+
+Phase 5 — Lecture Garmin et anti-doublon
+
+Créer :
+
+```text
+backend/app/services/garmin_client.py
+backend/app/services/deduplicator.py
+```
+
+Le module `garmin_client.py` doit encapsuler les appels MCP Garmin.
+
+Il doit pouvoir appeler en lecture :
+
+* `get_daily_weigh_ins(date)` ;
+* `get_body_composition(start_date, end_date)`.
+
+Il ne doit pas appeler d’écriture dans le dry-run.
+
+Le code doit être mockable pour les tests.
+
+Logique anti-doublon prudente
+
+Entrées :
+
+* candidat Withings normalisé ;
+* weigh-ins Garmin du même jour ;
+* body composition Garmin sur une fenêtre autour de la date ;
+* historique local `sync_events`.
+
+Fenêtre de comparaison :
+
+* même jour local ;
+* éventuellement ±12 h si Garmin renvoie un timestamp ;
+* configurable.
+
+Seuils configurables :
+
+* `WEIGHT_DUPLICATE_EPSILON_KG=0.05`
+* `WEIGHT_CONFLICT_EPSILON_KG=0.2`
+* `GARMIN_LOOKBACK_DAYS=7`
+* `GARMIN_LOOKAHEAD_DAYS=1`
+* `WITHINGS_PER_DAY_STRATEGY=latest_per_day`
+
+Règles :
+
+1. Si Garmin contient déjà une entrée le même jour avec un poids identique à ±0,05 kg :
+
+   * classer `duplicate_exact_or_near` ;
+   * ne pas écrire.
+2. Si Garmin contient déjà une entrée le même jour avec une différence de poids ≤0,2 kg :
+
+   * classer `possible_duplicate` ;
+   * ne pas écrire par défaut ;
+   * signaler doublon probable.
+3. Si Garmin contient déjà une composition corporelle le même jour avec poids proche et au moins un champ de composition proche :
+
+   * classer `duplicate_body_composition` ;
+   * ne pas écrire.
+4. Si Garmin contient une entrée le même jour mais poids différent >0,2 kg :
+
+   * classer `conflict_same_day` ;
+   * ne pas écrire ;
+   * rapporter explicitement.
+5. Si aucune entrée Garmin n’existe le même jour :
+
+   * classer `new_candidate` ;
+   * dry-run indique l’appel qui serait fait.
+6. Si plusieurs mesures Withings existent le même jour :
+
+   * ne pas toutes écrire automatiquement ;
+   * stratégie par défaut : `latest_per_day` ;
+   * autres stratégies possibles mais désactivées par défaut :
+
+     * `earliest_per_day` ;
+     * `all_if_distinct`.
+   * en dry-run, afficher les mesures ignorées.
+7. Si poids Withings absent :
+
+   * classer `invalid_missing_weight` ;
+   * ne pas écrire.
+8. Si date invalide :
+
+   * classer `invalid_date` ;
+   * ne pas écrire.
+9. Si valeur aberrante :
+
+   * classer `invalid_outlier` ;
+   * ne pas écrire.
+10. Si une mesure a déjà été importée par notre service :
+
+* vérifier via table locale `sync_events` et `idempotency_key` ;
+* classer `already_synced_by_garminsync` ;
+* ne pas écrire à nouveau.
+
+Valeurs aberrantes minimales :
+
+* poids < 20 kg ou > 300 kg : invalide ;
+* pourcentage de masse grasse < 2 % ou > 75 % : invalide ;
+* masse musculaire, osseuse ou hydrique négative : invalide ;
+* IMC calculé < 10 ou > 80 : warning ou invalide selon contexte.
+
+Créer une table locale `sync_events` :
+
+```sql
+CREATE TABLE IF NOT EXISTS sync_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    idempotency_key TEXT UNIQUE NOT NULL,
+    source TEXT NOT NULL,
+    source_measure_group_id TEXT,
+    source_measured_at_utc TEXT,
+    garmin_date TEXT NOT NULL,
+    weight_kg TEXT,
+    status TEXT NOT NULL,
+    dry_run INTEGER NOT NULL,
+    garmin_write_method TEXT,
+    garmin_response_json TEXT,
+    report_json TEXT,
+    created_at TEXT NOT NULL
+);
+```
+
+Statuts possibles :
+
+* `dry_run_new_candidate`
+* `dry_run_duplicate`
+* `dry_run_possible_duplicate`
+* `dry_run_conflict`
+* `dry_run_invalid`
+* `written`
+* `skipped_duplicate`
+* `skipped_conflict`
+* `skipped_invalid`
+* `write_failed`
+
+Phase 6 — Dry-run obligatoire
+
+Le dry-run doit être le mode par défaut et obligatoire au départ.
+
+Créer :
+
+* CLI :
+
+```bash
+python -m backend.app.cli dry-run --start-date 2026-06-01 --end-date 2026-06-19
+```
+
+* API :
+
+```text
+POST /api/sync/dry-run
+```
+
+* endpoint status :
+
+```text
+GET /api/status
+```
+
+Le dry-run doit afficher et sauvegarder un rapport complet.
+
+Format du rapport attendu :
+
+```json
+{
+  "mode": "dry_run",
+  "period": {
+    "start_date": "YYYY-MM-DD",
+    "end_date": "YYYY-MM-DD",
+    "timezone": "Europe/Paris"
+  },
+  "withings": {
+    "raw_groups_count": 0,
+    "parsed_measurements_count": 0,
+    "measurements": []
+  },
+  "garmin": {
+    "daily_weigh_ins": [],
+    "body_composition": []
+  },
+  "candidates": [
+    {
+      "date": "YYYY-MM-DD",
+      "measured_at_local": "...",
+      "source_measure_group_id": "...",
+      "mapped_fields": {},
+      "ignored_fields": {},
+      "null_fields": [],
+      "warnings": [],
+      "dedup_status": "new_candidate|duplicate|possible_duplicate|conflict|invalid",
+      "decision": "would_write|skip",
+      "garmin_call": {
+        "method": "add_body_composition",
+        "params": {}
+      },
+      "idempotency_key": "..."
+    }
+  ],
+  "summary": {
+    "would_write_count": 0,
+    "skipped_duplicates_count": 0,
+    "possible_duplicates_count": 0,
+    "conflicts_count": 0,
+    "invalid_count": 0,
+    "warnings_count": 0
+  }
+}
+```
+
+Le dry-run doit montrer :
+
+* les mesures récupérées depuis Withings ;
+* les unités normalisées ;
+* les valeurs brutes ;
+* les valeurs reconstruites ;
+* les champs Garmin qui seraient remplis ;
+* les champs Garmin laissés à `null` ;
+* les raisons des champs ignorés ;
+* les doublons Garmin détectés ;
+* les conflits ;
+* l’appel Garmin qui serait effectué, sans l’exécuter ;
+* l’idempotency key ;
+* un résumé final clair.
+
+Règles dry-run :
+
+* Même si `ENABLE_GARMIN_WRITES=true`, le dry-run ne doit jamais écrire.
+* Toute fonction d’écriture doit être protégée par un garde-fou centralisé.
+* Le rapport doit être sauvegardé dans :
+
+```text
+C:\Users\domin\Desktop\GarminSyncWeight\runtime\reports
+```
+
+Phase 7 — Écriture Garmin future, mais désactivée au départ
+
+Préparer le code de manière à permettre une écriture plus tard, mais ne pas l’activer par défaut.
+
+Créer éventuellement une fonction interne :
+
+```python
+write_candidate_to_garmin(candidate)
+```
+
+Mais cette fonction doit être protégée par tous les garde-fous suivants :
+
+* `ENABLE_GARMIN_WRITES=true`
+* `FIRST_WRITE_CONFIRMATION_REQUIRED=false` ou confirmation explicite persistée
+* argument CLI `--execute` obligatoire
+* `dry_run=False`
+* statut anti-doublon strictement `new_candidate`
+* absence de conflit
+* idempotency_key non déjà écrite
+* poids valide
+* méthode Garmin autorisée explicitement
+
+Si ces conditions ne sont pas toutes réunies :
+
+* ne pas appeler Garmin ;
+* logger un refus ;
+* retourner une erreur explicite.
+
+L’écriture future doit choisir :
+
+1. `add_body_composition` si poids + composition fiable.
+2. `add_weigh_in_with_timestamps` si poids seul mais timestamp pertinent.
+3. `add_weigh_in` en dernier recours.
+
+Mais pour cette première implémentation :
+
+* ne pas activer l’écriture dans l’UI ;
+* ne pas exposer un bouton “écrire” sans confirmation forte ;
+* ne pas programmer d’écriture automatique ;
+* ne pas créer de tâche planifiée d’écriture active ;
+* ne pas écrire dans Garmin.
+
+Phase 8 — Sécurité
+
+Implémenter les règles suivantes.
+
+Secrets :
+
+* aucun secret dans GitHub ;
+* `.env` ignoré ;
+* `.env.example` sans valeurs sensibles ;
+* tokens Withings dans `data/withings_tokens.db` ou équivalent ;
+* permissions fichier restrictives si possible ;
+* logs sans tokens ;
+* redaction systématique.
+
+Garmin :
+
+* aucun appel de suppression ;
+* pas de `delete_weigh_ins` ;
+* pas de remplacement automatique ;
+* pas d’écriture sans confirmation ;
+* pas d’écriture si conflit ;
+* pas d’écriture si doublon possible.
+
+Withings :
+
+* ne pas logger les tokens ;
+* ne pas logger la réponse OAuth brute sans redaction ;
+* renouveler proprement les tokens ;
+* gérer la révocation ou expiration.
+
+API locale :
+
+* écouter par défaut sur `127.0.0.1` ;
+* ne pas exposer publiquement ;
+* si Docker, binder sur `127.0.0.1:8010` par défaut ;
+* ajouter une variable explicite si exposition externe, mais la documenter comme non recommandée.
+
+Logs :
+
+* format JSONL ou structuré ;
+* fichiers :
+
+  * `logs/backend.log`
+  * `logs/withings.log`
+  * `logs/garmin.log`
+  * `logs/sync.log`
+  * `logs/security.log`
+* redaction centralisée.
+
+Audit sécurité :
+
+* ajouter une section `docs/security.md`.
+* ajouter un test qui vérifie qu’aucun token n’apparaît dans les logs de test.
+
+Phase 9 — Tests
+
+Créer des tests unitaires et fixtures.
+
+Tests obligatoires :
+
+1. `test_withings_value_unit_conversion`
+
+   * vérifie `real_value = value * 10^unit`.
+2. `test_mapping_weight`
+
+   * type 1 Withings → Garmin weight.
+3. `test_mapping_fat_percent`
+
+   * type 6 Withings → Garmin percent_fat.
+4. `test_mapping_unknown_field_ignored`
+
+   * un type non reconnu ne doit pas être écrit.
+5. `test_hydration_mass_not_mapped_to_percent_by_default`
+
+   * type 77 ne doit pas être converti en pourcentage sans validation.
+6. `test_bmi_null_without_height`
+
+   * pas d’IMC si taille non configurée.
+7. `test_bmi_calculated_with_explicit_height`
+
+   * IMC calculé uniquement si `USER_HEIGHT_M` défini.
+8. `test_duplicate_same_day_same_weight`
+
+   * doublon détecté si même jour et poids quasi identique.
+9. `test_possible_duplicate_small_weight_delta`
+
+   * possible doublon si écart faible.
+10. `test_conflict_same_day_different_weight`
+
+* conflit si même jour et poids différent.
+
+11. `test_dry_run_never_calls_write`
+
+* mock Garmin write jamais appelé.
+
+12. `test_execute_blocked_by_default`
+
+* même en mode execute, écriture bloquée si variable non activée.
+
+13. `test_no_delete_endpoint_available`
+
+* aucune fonction de suppression appelée ou exposée.
+
+14. `test_log_redaction`
+
+* tokens et secrets masqués dans les logs.
+
+Créer des fixtures :
+
+* réponse Withings `getmeas` avec poids seul ;
+* réponse Withings `getmeas` avec poids + fat ratio + muscle + bone + hydration ;
+* réponse Garmin vide ;
+* réponse Garmin avec doublon ;
+* réponse Garmin avec conflit.
+
+Phase 10 — API FastAPI minimale
+
+Créer les endpoints suivants.
+
+```text
+GET /api/status
+```
+
+Retourne :
+
+* statut application ;
+* présence config Withings ;
+* statut token Withings sans afficher le token ;
+* statut accès Garmin lecture ;
+* dry-run default ;
+* write enabled false/true ;
+* dernière synchro ;
+* dernier rapport.
+
+```text
+GET /api/withings/auth/start
+```
+
+Démarre OAuth2 Withings.
+
+```text
+GET /api/withings/auth/callback
+```
+
+Callback OAuth2.
+
+```text
+POST /api/sync/dry-run
+```
+
+Body :
+
+```json
+{
+  "start_date": "YYYY-MM-DD",
+  "end_date": "YYYY-MM-DD",
+  "timezone": "Europe/Paris"
+}
+```
+
+Retour :
+
+* rapport complet.
+
+```text
+GET /api/sync/reports/latest
+```
+
+Retour :
+
+* dernier rapport dry-run.
+
+```text
+GET /api/logs
+```
+
+Retour :
+
+* logs récents avec redaction.
+
+Ne pas créer d’endpoint d’écriture actif dans la première version, sauf endpoint expérimental explicitement désactivé par défaut et protégé. Dans le doute, ne pas créer l’endpoint d’écriture.
+
+Phase 11 — CLI minimale
+
+Créer une commande de dry-run.
+
+Exemple :
+
+```bash
+cd C:\Users\domin\Desktop\GarminSyncWeight
+python -m backend.app.cli dry-run --start-date 2026-06-01 --end-date 2026-06-19
+```
+
+Sortie attendue :
+
+```text
+Mode: DRY-RUN
+Période: 2026-06-01 → 2026-06-19
+Withings: 12 groupes de mesures récupérés, 10 mesures exploitables
+Garmin: 8 weigh-ins existants, 8 compositions existantes
+Nouveaux candidats: 2
+Doublons: 7
+Doublons probables: 0
+Conflits: 1
+Invalides: 0
+Écritures Garmin exécutées: 0
+Rapport: runtime/reports/sync-dry-run-20260619-120000.json
+```
+
+Phase 12 — Docker
+
+Créer :
+
+* `Dockerfile`
+* `docker-compose.yml`
+* `.env.example`
+
+Contraintes Docker :
+
+* image compatible déploiement local ;
+* volumes :
+
+  * `./data:/app/data`
+  * `./logs:/app/logs`
+  * `./runtime:/app/runtime`
+* port local par défaut :
+
+  * `127.0.0.1:8010:8010`
+* pas de secrets dans l’image ;
+* variables d’environnement via `.env`.
+
+Exemple de service :
+
+```yaml
+services:
+  garminsync:
+    build: .
+    container_name: garminsync
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:8010:8010"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./runtime:/app/runtime
+    restart: unless-stopped
+```
+
+Phase 13 — Documentation attendue
+
+Créer ou mettre à jour :
+
+1. `README.md`
+
+   * objectif ;
+   * installation ;
+   * configuration Withings ;
+   * dry-run ;
+   * Docker ;
+   * sécurité ;
+   * limites.
+
+2. `docs/architecture.md`
+
+   * architecture globale ;
+   * flux Withings → Garmin ;
+   * composants ;
+   * stockage ;
+   * séquence dry-run ;
+   * séquence future execute.
+
+3. `docs/mapping_withings_garmin.md`
+
+   * tableau complet Withings → Garmin ;
+   * champs certains ;
+   * champs à vérifier ;
+   * champs volontairement null ;
+   * conversions ;
+   * limites.
+
+4. `docs/security.md`
+
+   * secrets ;
+   * logs ;
+   * tokens ;
+   * écriture Garmin ;
+   * interdiction suppression ;
+   * protections.
+
+5. `docs/dry_run_report_example.md`
+
+   * exemple de rapport.
+
+Phase 14 — Contraintes de qualité
+
+Respecte ces règles :
+
+* code typé ;
+* Pydantic pour les modèles ;
+* Decimal pour les valeurs de poids/composition, pas float brut pour les décisions ;
+* fonctions courtes ;
+* séparation claire client/parsing/mapping/dedup/sync ;
+* pas de logique métier dans les routes FastAPI ;
+* erreurs explicites ;
+* logs utiles mais sans secrets ;
+* tests automatisés ;
+* pas de dépendance inutile ;
+* pas de secrets dans Git ;
+* pas d’écriture Garmin au premier lancement ;
+* pas de suppression Garmin ;
+* idempotence obligatoire ;
+* dry-run prioritaire ;
+* documentation claire ;
+* compatibilité Windows et Docker.
+
+Phase 15 — Livrable attendu de ta réponse
+
+Dans ta réponse, fournis d’abord :
+
+1. Un audit rapide du projet existant situé dans :
+
+```text
+C:\Users\domin\Desktop\Garmin-MCP
+```
+
+2. La décision d’architecture recommandée.
+3. La liste exacte des fichiers à créer dans :
+
+```text
+C:\Users\domin\Desktop\GarminSyncWeight
+```
+
+4. La liste des fichiers éventuellement repris ou adaptés depuis GarminToGPT.
+5. Les risques identifiés.
+6. Les garde-fous de sécurité.
+7. Le plan d’implémentation par étapes.
+8. Les commandes de test.
+9. Les commandes de lancement local.
+10. Les commandes Docker.
+
+Ensuite seulement, implémente la première version safe qui inclut :
+
+* structure du projet GarminSyncWeight ;
+* config `.env.example` ;
+* client Withings préparé ;
+* OAuth2 Withings ;
+* parser Withings ;
+* mapping prudent ;
+* client Garmin en lecture ou interface mockable ;
+* anti-doublon ;
+* dry-run ;
+* rapport JSON ;
+* tests unitaires ;
+* documentation ;
+* Dockerfile ;
+* docker-compose.
+
+Ne fais pas d’écriture Garmin réelle dans cette première version.
+
+Critères d’acceptation
+
+La tâche est réussie si :
+
+* le dossier `C:\Users\domin\Desktop\GarminSyncWeight` est créé ;
+* le projet démarre localement ;
+* le dry-run fonctionne sans écrire dans Garmin ;
+* les mesures Withings sont parsées proprement ;
+* le mapping produit un objet Garmin candidat clair ;
+* les champs douteux restent `null` ;
+* les doublons Garmin sont détectés ;
+* les conflits sont signalés ;
+* le rapport dry-run est lisible ;
+* les tests passent ;
+* aucun token ou secret n’apparaît dans les logs ;
+* aucun endpoint de suppression Garmin n’est utilisé ;
+* aucune écriture Garmin n’est déclenchée ;
+* le code reste compatible Docker ;
+* la documentation explique clairement comment valider avant d’autoriser une écriture réelle.
+
+Point critique final
+
+Ne cherche pas à “tout synchroniser” dès maintenant.
+
+La priorité est :
+
+1. exactitude du mapping ;
+2. sécurité ;
+3. dry-run ;
+4. anti-doublon ;
+5. idempotence ;
+6. rapport clair.
+
+L’écriture réelle Garmin viendra dans une étape ultérieure, après validation humaine du rapport dry-run.
