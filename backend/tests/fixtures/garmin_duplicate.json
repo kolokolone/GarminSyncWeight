@@ -1,0 +1,16 @@
+{
+  "weigh_ins": [
+    {
+      "date": "2024-06-01",
+      "weight_kg": 78.5,
+      "bmi": 24.0
+    }
+  ],
+  "body_compositions": [
+    {
+      "date": "2024-06-01",
+      "weight_kg": 78.5,
+      "percent_fat": 22.0
+    }
+  ]
+}

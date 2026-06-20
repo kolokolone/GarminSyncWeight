@@ -1,0 +1,48 @@
+{
+  "status": 0,
+  "body": {
+    "measuregrps": [
+      {
+        "grpid": 2001,
+        "attrib": 0,
+        "date": 1717200000,
+        "created": 1717200000,
+        "category": 1,
+        "deviceid": "withings_device_1",
+        "measures": [
+          {"type": 1, "value": 78500, "unit": -3},
+          {"type": 6, "value": 220, "unit": -1},
+          {"type": 5, "value": 61000, "unit": -3},
+          {"type": 8, "value": 17500, "unit": -3},
+          {"type": 76, "value": 55000, "unit": -3},
+          {"type": 88, "value": 2800, "unit": -3},
+          {"type": 77, "value": 42000, "unit": -3}
+        ]
+      },
+      {
+        "grpid": 2002,
+        "attrib": 0,
+        "date": 1717286400,
+        "created": 1717286400,
+        "category": 1,
+        "deviceid": "withings_device_1",
+        "measures": [
+          {"type": 1, "value": 78600, "unit": -3},
+          {"type": 6, "value": 215, "unit": -1},
+          {"type": 6, "value": 9999, "unit": -1}
+        ]
+      },
+      {
+        "grpid": 2003,
+        "attrib": 0,
+        "date": 1717372800,
+        "created": 1717372800,
+        "category": 1,
+        "measures": [
+          {"type": 1, "value": 25000, "unit": -3},
+          {"type": 6, "value": 10, "unit": -1}
+        ]
+      }
+    ]
+  }
+}
