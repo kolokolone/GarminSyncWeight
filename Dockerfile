@@ -10,13 +10,14 @@ RUN apt-get update \
 RUN pip install --no-cache-dir uv
 
 COPY pyproject.toml ./
-RUN uv pip install --system .
+RUN uv pip install --system . \
+    && uv pip install --system "git+https://github.com/Taxuspt/garmin_mcp"
 
 COPY backend ./backend
 
 RUN useradd --create-home --shell /usr/sbin/nologin app \
-    && mkdir -p /app/data /app/logs /app/runtime/reports \
-    && chown -R app:app /app
+    && mkdir -p /app/data /app/logs /app/runtime/reports /home/app/.garminconnect \
+    && chown -R app:app /app /home/app/.garminconnect
 
 USER app
 ENV PYTHONUNBUFFERED=1

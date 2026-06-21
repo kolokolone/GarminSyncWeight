@@ -10,6 +10,7 @@ services:
       - garminsync_data:/app/data
       - garminsync_logs:/app/logs
       - garminsync_runtime:/app/runtime
+      - garminsync_garmin:/home/app/.garminconnect
     restart: unless-stopped
     init: true
     healthcheck:
@@ -24,3 +25,4 @@ volumes:
   garminsync_data:
   garminsync_logs:
   garminsync_runtime:
+  garminsync_garmin:
