@@ -1,13 +1,8 @@
-"""Read-only client for Garmin Connect data via MCP endpoints.
+"""Garmin Connect client compatible with Taxuspt/garmin_mcp tokens.
 
-In this first version, only read operations are implemented.
-Write calls are stubbed and guarded by the sync engine's safeguard.
-
-The actual Garmin MCP endpoint integration will be done via the
-``garmin_mcp`` tool calls (get_weigh_ins, get_daily_weigh_ins,
-get_body_composition).
-
-For testing, this class can be mocked at the method level.
+Garmin authentication is delegated to ``garmin-mcp-auth`` from
+https://github.com/Taxuspt/garmin_mcp. Runtime API calls use the same
+``python-garminconnect`` library and token directory expected by that connector.
 """
 
 from datetime import date
@@ -16,6 +11,7 @@ from typing import Any
 
 from app.config import Settings
 from app.models.garmin import GarminBodyComposition, GarminWeighIn
+from app.services.garmin_auth_service import GarminAuthService
 
 _logger = None
 
@@ -30,59 +26,64 @@ def _log() -> Any:
 
 
 class GarminClient:
-    """Read-only interface for fetching existing Garmin Connect data.
+    """Read/write interface for Garmin Connect body data."""
 
-    In production, these methods will call the Garmin MCP endpoints.
-    For now, the class operates in 'mock' mode returning empty lists
-    so the pipeline can be tested end-to-end in dry-run mode.
-
-    When the MCP bridge is connected, set ``use_mcp=True`` and
-    implement the MCP calls in each method.
-    """
-
-    def __init__(self, settings: Settings, use_mcp: bool = False) -> None:
+    def __init__(self, settings: Settings, test_data: dict[str, Any] | None = None) -> None:
         self._settings = settings
-        self._use_mcp = use_mcp
-        self._mock_data: dict[str, Any] = {}
+        self._test_data: dict[str, Any] = test_data or {}
+        self._api: Any | None = None
 
-    def set_mock_data(
+    def set_test_data(
         self,
         weigh_ins: list[dict] | None = None,
         body_compositions: list[dict] | None = None,
     ) -> None:
-        """Inject mock data for testing without MCP."""
-        self._mock_data = {
+        """Inject deterministic data for tests only."""
+        self._test_data = {
             "weigh_ins": weigh_ins or [],
             "body_compositions": body_compositions or [],
         }
 
     async def get_daily_weigh_ins(self, target_date: date) -> list[GarminWeighIn]:
         """Fetch weigh-ins for a specific date from Garmin Connect."""
-        if not self._use_mcp:
-            return self._mock_weigh_ins(target_date)
-        return await self._mcp_get_daily_weigh_ins(target_date)
+        if self._test_data:
+            return self._test_weigh_ins(target_date)
+        raw = self._client().get_daily_weigh_ins(target_date.isoformat())
+        return [self._parse_weigh_in(item, target_date) for item in self._extract_measurements(raw)]
 
     async def get_body_composition(
         self, start_date: date, end_date: date,
     ) -> list[GarminBodyComposition]:
         """Fetch body composition entries in a date range."""
-        if not self._use_mcp:
-            return self._mock_body_composition(start_date, end_date)
-        return await self._mcp_get_body_composition(start_date, end_date)
+        if self._test_data:
+            return self._test_body_composition(start_date, end_date)
+        raw = self._client().get_body_composition(start_date.isoformat(), end_date.isoformat())
+        return [self._parse_body_composition(item) for item in self._extract_body_entries(raw)]
 
-    def can_read(self) -> bool:
-        """Return True if Garmin read access is available."""
-        return self._use_mcp or bool(
-            self._mock_data.get("weigh_ins")
-            or self._mock_data.get("body_compositions")
-        )
+    async def check_connection(self) -> dict[str, Any]:
+        """Verify Garmin token validity with an active command/API check."""
+        status = GarminAuthService(self._settings).status()
+        if not status.token_valid:
+            return {"connected": False, "state": status.state, "message": status.message}
+        try:
+            client = self._client()
+            if hasattr(client, "get_full_name"):
+                client.get_full_name()
+            return {
+                "connected": True,
+                "state": "connected",
+                "message": "Connexion Garmin vérifiée.",
+            }
+        except Exception as exc:
+            _log().error("Garmin active connection check failed: %s", exc)
+            return {"connected": False, "state": "api_error", "message": str(exc)}
 
-    # ── Mock implementations (for testing) ─────────────────────
+    # ── Test-data implementations ──────────────────────────────
 
-    def _mock_weigh_ins(self, target_date: date) -> list[GarminWeighIn]:
-        """Filter mock weigh-ins by date."""
+    def _test_weigh_ins(self, target_date: date) -> list[GarminWeighIn]:
+        """Filter injected test weigh-ins by date."""
         results: list[GarminWeighIn] = []
-        for raw in self._mock_data.get("weigh_ins", []):
+        for raw in self._test_data.get("weigh_ins", []):
             entry = GarminWeighIn(
                 date=target_date,
                 weight_kg=Decimal(str(raw["weight_kg"])) if "weight_kg" in raw else None,
@@ -92,12 +93,12 @@ class GarminClient:
             results.append(entry)
         return results
 
-    def _mock_body_composition(
+    def _test_body_composition(
         self, start_date: date, end_date: date,
     ) -> list[GarminBodyComposition]:
-        """Filter mock body composition entries by date range."""
+        """Filter injected test body composition entries by date range."""
         results: list[GarminBodyComposition] = []
-        for raw in self._mock_data.get("body_compositions", []):
+        for raw in self._test_data.get("body_compositions", []):
             raw_date_str = raw.get("date", "")
             if not raw_date_str:
                 continue
@@ -115,54 +116,98 @@ class GarminClient:
                 results.append(entry)
         return results
 
-    # ── MCP stubs (to be implemented when MCP bridge is active) ─
-
-    async def _mcp_get_daily_weigh_ins(self, target_date: date) -> list[GarminWeighIn]:
-        """Call Garmin MCP's get_daily_weigh_ins endpoint."""
-        # TODO: Implement when MCP bridge is available
-        _log().warning("MCP not connected — returning empty weigh-ins for %s", target_date)
-        return []
-
-    async def _mcp_get_body_composition(
-        self, start_date: date, end_date: date,
-    ) -> list[GarminBodyComposition]:
-        """Call Garmin MCP's get_body_composition endpoint."""
-        # TODO: Implement when MCP bridge is available
-        _log().warning(
-            "MCP not connected — returning empty body composition for %s to %s",
-            start_date, end_date,
-        )
-        return []
-
-    # ── Write stubs (guarded, never called in dry-run) ─────────
-
-    _WRITE_DISABLED_MSG = (
-        "Garmin writes are disabled in v1. "
-        "Set ENABLE_GARMIN_WRITES=true to allow."
-    )
-
     async def add_body_composition(self, **kwargs: Any) -> dict[str, Any]:
-        """Write body composition to Garmin Connect.
-
-        WARNING: This function must NEVER be called in dry-run mode.
-        It is guarded by the sync engine's centralized write gate.
-        """
-        _log().warning(
-            "Garmin write 'add_body_composition' called — this should not happen in dry-run!",
-        )
-        raise RuntimeError(self._WRITE_DISABLED_MSG)
+        """Write body composition to Garmin Connect using verified parameters."""
+        return self._client().add_body_composition(**kwargs)
 
     async def add_weigh_in_with_timestamps(self, **kwargs: Any) -> dict[str, Any]:
         """Write weigh-in with timestamps to Garmin Connect."""
-        _log().warning(
-            "Garmin write 'add_weigh_in_with_timestamps' called — "
-            "this should not happen in dry-run!",
-        )
-        raise RuntimeError(self._WRITE_DISABLED_MSG)
+        return self._client().add_weigh_in(**kwargs)
 
     async def add_weigh_in(self, **kwargs: Any) -> dict[str, Any]:
         """Write weigh-in to Garmin Connect."""
-        _log().warning(
-            "Garmin write 'add_weigh_in' called — this should not happen in dry-run!",
+        return self._client().add_weigh_in(**kwargs)
+
+    def _client(self) -> Any:
+        if self._api is not None:
+            return self._api
+        try:
+            from garminconnect import Garmin  # type: ignore[import-not-found]
+        except Exception as exc:
+            raise RuntimeError(
+                "Le client Garmin n'est pas installé. Installe Taxuspt/garmin_mcp "
+                "ou garminconnect, puis relance l'application."
+            ) from exc
+        api = Garmin()
+        try:
+            api.login(tokenstore=str(self._settings.garmin_token_path))
+        except TypeError:
+            api.login()
+        self._api = api
+        return api
+
+    @staticmethod
+    def _extract_measurements(raw: Any) -> list[dict[str, Any]]:
+        if isinstance(raw, dict):
+            data = (
+                raw.get("measurements")
+                or raw.get("dailyWeightSummaries")
+                or raw.get("weighIns")
+                or []
+            )
+            return data if isinstance(data, list) else []
+        return raw if isinstance(raw, list) else []
+
+    @staticmethod
+    def _extract_body_entries(raw: Any) -> list[dict[str, Any]]:
+        if isinstance(raw, dict):
+            for key in ("bodyCompositions", "bodyComposition", "dateWeightList", "measurements"):
+                value = raw.get(key)
+                if isinstance(value, list):
+                    return value
+            return [raw]
+        return raw if isinstance(raw, list) else []
+
+    @staticmethod
+    def _parse_weigh_in(raw: dict[str, Any], fallback_date: date) -> GarminWeighIn:
+        raw_date = (
+            raw.get("date")
+            or raw.get("calendarDate")
+            or raw.get("samplePk")
+            or fallback_date.isoformat()
         )
-        raise RuntimeError(self._WRITE_DISABLED_MSG)
+        parsed_date = fallback_date
+        if isinstance(raw_date, str):
+            try:
+                parsed_date = date.fromisoformat(raw_date[:10])
+            except ValueError:
+                parsed_date = fallback_date
+        weight = raw.get("weight_kg") or raw.get("weightKg")
+        if weight is None and raw.get("weight_grams") is not None:
+            weight = Decimal(str(raw["weight_grams"])) / Decimal("1000")
+        if weight is None and raw.get("weight") is not None:
+            weight = raw.get("weight")
+        return GarminWeighIn(date=parsed_date, weight_kg=weight, bmi=raw.get("bmi"), raw=raw)
+
+    @staticmethod
+    def _parse_body_composition(raw: dict[str, Any]) -> GarminBodyComposition:
+        raw_date = raw.get("date") or raw.get("calendarDate") or raw.get("samplePk")
+        parsed_date = date.today()
+        if isinstance(raw_date, str):
+            try:
+                parsed_date = date.fromisoformat(raw_date[:10])
+            except ValueError:
+                parsed_date = date.today()
+        weight = raw.get("weight_kg") or raw.get("weightKg")
+        if weight is None and raw.get("weight_grams") is not None:
+            weight = Decimal(str(raw["weight_grams"])) / Decimal("1000")
+        return GarminBodyComposition(
+            date=parsed_date,
+            weight_kg=weight,
+            percent_fat=raw.get("percent_fat") or raw.get("bodyFat") or raw.get("body_fat_percent"),
+            percent_hydration=raw.get("percent_hydration") or raw.get("bodyWater"),
+            bone_mass=raw.get("bone_mass") or raw.get("boneMass"),
+            muscle_mass=raw.get("muscle_mass") or raw.get("muscleMass"),
+            bmi=raw.get("bmi"),
+            raw=raw,
+        )
