@@ -100,15 +100,6 @@ def _build_field_mapping(
         _row("IMC", _fmt_val(measurement.bmi),
              _fmt_val(c.bmi) if c else None,
              _sync_status(c, c and c.bmi), ""),
-        _row("Métabolisme basal", _fmt_val(measurement.basal_met, "kcal"),
-             _fmt_val(c.basal_met, "kcal") if c else None,
-             _sync_status(c, c and c.basal_met), ""),
-        _row("Âge métabolique", _fmt_val(measurement.metabolic_age, "ans"),
-             _fmt_val(c.metabolic_age, "ans") if c else None,
-             _sync_status(c, c and c.metabolic_age), ""),
-        _row("Graisse viscérale", _fmt_val(measurement.visceral_fat_rating),
-             _fmt_val(c.visceral_fat_rating) if c else None,
-             _sync_status(c, c and c.visceral_fat_rating), ""),
     ]
 
     for label, withings_val, garmin_val, status, msg in fields:
