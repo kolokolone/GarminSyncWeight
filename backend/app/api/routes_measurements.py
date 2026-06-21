@@ -5,7 +5,9 @@ preview of Withings measurements and their planned Garmin mapping
 for the Dashboard UI.
 """
 
-from datetime import UTC, datetime, timedelta
+import json
+from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 
 from app.cache import get_cache
 from app.config import Settings, get_settings
@@ -29,6 +31,7 @@ from app.services.withings_parser import WithingsParser
 from app.storage.sync_store import SyncStore
 from app.storage.token_store import TokenStore
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/api/measurements", tags=["measurements"])
 
@@ -550,3 +553,87 @@ async def get_measurement_history(
             checked_at=now_str,
         ),
     )
+
+
+# ── Manual measurement ──────────────────────────────────────────
+
+_MANUAL_FILE = "manual_measurements.json"
+
+
+def _manual_path(settings: Settings) -> Path:
+    return settings.resolved_data_dir / _MANUAL_FILE
+
+
+def _load_manual(settings: Settings) -> list[dict]:
+    p = _manual_path(settings)
+    if p.exists():
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+    return []
+
+
+def _save_manual(settings: Settings, data: list[dict]) -> None:
+    _manual_path(settings).write_text(
+        json.dumps(data, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
+    )
+
+
+class ManualMeasurementRequest(BaseModel):
+    """Request body for POST /api/measurements/manual."""
+
+    date: str = Field(..., description="Date YYYY-MM-DD")
+    weight_kg: float | None = Field(default=None, ge=20, le=300)
+    fat_percent: float | None = Field(default=None, ge=5, le=70)
+    muscle_mass_kg: float | None = None
+    bone_mass_kg: float | None = None
+    note: str | None = None
+
+
+@router.post("/manual")
+async def add_manual_measurement(
+    body: ManualMeasurementRequest,
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Add a manual weight measurement (stored locally)."""
+    settings.ensure_directories()
+
+    manual = _load_manual(settings)
+    entry = {
+        "id": len(manual) + 1,
+        "date": body.date,
+        "weight_kg": body.weight_kg,
+        "fat_percent": body.fat_percent,
+        "muscle_mass_kg": body.muscle_mass_kg,
+        "bone_mass_kg": body.bone_mass_kg,
+        "note": body.note or "",
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+    manual.append(entry)
+    _save_manual(settings, manual)
+    return {"status": "ok", "entry": entry}
+
+
+@router.get("/manual")
+def list_manual_measurements(
+    settings: Settings = Depends(get_settings),
+) -> list[dict]:
+    """List manually added measurements."""
+    return _load_manual(settings)
+
+
+@router.delete("/manual/{entry_id}")
+def delete_manual_measurement(
+    entry_id: int,
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Delete a manual measurement by ID."""
+    manual = _load_manual(settings)
+    before = len(manual)
+    manual = [e for e in manual if e.get("id") != entry_id]
+    if len(manual) == before:
+        raise HTTPException(status_code=404, detail="Entrée non trouvée.")
+    _save_manual(settings, manual)
+    return {"status": "deleted"}

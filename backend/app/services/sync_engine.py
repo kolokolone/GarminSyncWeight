@@ -1,5 +1,7 @@
 """Controlled Withings → Garmin synchronization engine."""
 
+import collections.abc
+import json
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -59,8 +61,13 @@ class SyncEngine:
         start_date: str,
         end_date: str,
         tz_name: str | None = None,
+        progress_callback: collections.abc.Callable[[str], None] | None = None,
     ) -> SyncReport:
-        """Run a real, guarded, idempotent synchronization."""
+        """Run a real, guarded, idempotent synchronization.
+
+        If *progress_callback* is provided, it is called with a JSON-line
+        summary after each candidate is processed (for SSE streaming).
+        """
         tz = self._load_timezone(tz_name or self._settings.app_timezone)
         start_day = self._parse_date(start_date)
         end_day = self._parse_date(end_date)
@@ -69,6 +76,8 @@ class SyncEngine:
 
         attempt_id = self._sync_store.start_attempt(start_date, end_date)
         _log().info("Sync starting — period=%s → %s", start_date, end_date)
+        if progress_callback:
+            progress_callback(json.dumps({"type": "start", "period": f"{start_date} → {end_date}"}))
         try:
             prerequisites = await self._check_prerequisites()
             self._require_connected(prerequisites)
@@ -77,6 +86,8 @@ class SyncEngine:
             withings_raw_groups = await self._withings_client.get_measurements(dt_start, dt_end)
             parsed = self._parser.parse_measure_groups(withings_raw_groups)
             parsed = self._filter_period(self._apply_per_day_strategy(parsed), start_day, end_day)
+            if progress_callback:
+                progress_callback(json.dumps({"type": "parsed", "count": len(parsed)}))
 
             candidates = self._map_measurements(parsed)
             garmin_weigh_ins = await self._fetch_garmin_weigh_ins(start_day, end_day)
@@ -84,6 +95,8 @@ class SyncEngine:
                 start_day - timedelta(days=self._settings.garmin_lookback_days),
                 end_day + timedelta(days=self._settings.garmin_lookahead_days),
             )
+            if progress_callback:
+                progress_callback(json.dumps({"type": "garmin_fetched", "weigh_ins": len(garmin_weigh_ins), "body_comp": len(garmin_bc)}))
 
             report_candidates: list[SyncCandidate] = []
             summary = SyncSummary(
@@ -93,7 +106,7 @@ class SyncEngine:
                 candidates_count=len(candidates),
             )
 
-            for candidate in candidates:
+            for i, candidate in enumerate(candidates):
                 item = await self._process_candidate(
                     candidate,
                     garmin_weigh_ins,
@@ -101,6 +114,16 @@ class SyncEngine:
                     summary,
                 )
                 report_candidates.append(item)
+                if progress_callback:
+                    progress_callback(json.dumps({
+                        "type": "candidate",
+                        "index": i + 1,
+                        "total": len(candidates),
+                        "date": item.date,
+                        "weight_kg": item.mapped_fields.get("weight") if item.mapped_fields else None,
+                        "decision": item.decision,
+                        "reason": item.reason,
+                    }))
 
             summary.warnings_count = sum(len(c.warnings) for c in report_candidates)
 
@@ -129,10 +152,21 @@ class SyncEngine:
                 summary.invalid_count,
                 summary.failed_count,
             )
+            if progress_callback:
+                progress_callback(json.dumps({
+                    "type": "complete",
+                    "synced": summary.synced_count,
+                    "existing": summary.skipped_existing_count,
+                    "conflicts": summary.conflicts_count,
+                    "invalid": summary.invalid_count,
+                    "failed": summary.failed_count,
+                }))
             return report
         except Exception as exc:
             self._sync_store.finish_attempt(attempt_id, "failed", error_message=str(exc))
             _log().error("Sync refused or failed: %s", exc)
+            if progress_callback:
+                progress_callback(json.dumps({"type": "error", "message": str(exc)}))
             raise
 
     async def _check_prerequisites(self) -> dict[str, Any]:

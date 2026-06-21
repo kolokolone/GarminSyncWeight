@@ -1,4 +1,4 @@
-"""Controlled synchronization routes."""
+"""Controlled synchronization routes (including SSE streaming)."""
 
 from app.cache import get_cache
 from app.config import Settings, get_settings
@@ -13,7 +13,8 @@ from app.services.withings_client import WithingsClient
 from app.services.withings_parser import WithingsParser
 from app.storage.sync_store import SyncStore
 from app.storage.token_store import TokenStore
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/sync", tags=["sync"])
@@ -86,3 +87,65 @@ def list_reports(settings: Settings = Depends(get_settings)) -> list[dict]:
     """List available sync reports."""
     report_builder = ReportBuilder(settings)
     return report_builder.list_reports()
+
+
+# ── SSE streaming endpoint ──────────────────────────────────────
+
+async def _sse_sync_generator(start_date: str, end_date: str, tz_name: str | None, settings: Settings):
+    """Async generator that runs sync and yields SSE `data:` lines."""
+    engine = _build_engine(settings)
+    lines: list[str] = []
+
+    def on_progress(payload: str) -> None:
+        lines.append(f"data: {payload}\n\n")
+
+    try:
+        report = await engine.run_sync(
+            start_date=start_date,
+            end_date=end_date,
+            tz_name=tz_name,
+            progress_callback=on_progress,
+        )
+        # After streaming, send the full report as a final event
+        import json
+        lines.append(f"data: {json.dumps({'type': 'report', 'report': report.model_dump(mode='json')})}\n\n")
+    except ValueError as exc:
+        lines.append(f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n")
+    except RuntimeError as exc:
+        lines.append(f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n")
+    except Exception as exc:
+        lines.append(f"data: {json.dumps({'type': 'error', 'message': f'Erreur interne: {exc}'})}\n\n")
+    finally:
+        # Invalidate cache after sync attempt
+        get_cache().invalidate_all()
+
+    for line in lines:
+        yield line
+
+
+@router.get("/stream")
+async def sync_stream(
+    start_date: str = Query(..., description="Start date YYYY-MM-DD"),
+    end_date: str = Query(..., description="End date YYYY-MM-DD"),
+    timezone: str | None = Query(default=None, description="IANA timezone name"),
+    settings: Settings = Depends(get_settings),
+) -> StreamingResponse:
+    """SSE endpoint: runs sync and streams progress events in real-time.
+
+    Events:
+      - ``{"type":"start", ...}``
+      - ``{"type":"parsed", ...}``
+      - ``{"type":"garmin_fetched", ...}``
+      - ``{"type":"candidate", ...}`` — one per measurement
+      - ``{"type":"complete", ...}``
+      - ``{"type":"error", ...}``
+      - ``{"type":"report", "report": {...}}`` — final SyncReport
+    """
+    return StreamingResponse(
+        _sse_sync_generator(start_date, end_date, timezone, settings),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
