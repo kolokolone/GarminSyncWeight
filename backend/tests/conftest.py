@@ -1,6 +1,7 @@
 """Shared test fixtures and configuration."""
 
 import json
+import os
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -12,6 +13,22 @@ from app.services.deduplicator import Deduplicator
 from app.services.mapper import WithingsToGarminMapper
 from app.services.withings_parser import WithingsParser
 from app.storage.sync_store import SyncStore
+
+
+@pytest.fixture(autouse=True)
+def _test_env():
+    """Force test mode so logs never write to the production directory.
+
+    Sets ``APP_ENV=test`` for the duration of each test and restores
+    the previous value on teardown.
+    """
+    old = os.environ.get("APP_ENV")
+    os.environ["APP_ENV"] = "test"
+    yield
+    if old is None:
+        os.environ.pop("APP_ENV", None)
+    else:
+        os.environ["APP_ENV"] = old
 
 _FIXTURES_DIR = Path(__file__).parent / "fixtures"
 

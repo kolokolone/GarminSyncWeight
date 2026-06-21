@@ -7,11 +7,15 @@ Logs are written to separate files per subsystem:
   - garmin.log   (Garmin MCP calls)
   - sync.log     (sync pipeline)
   - security.log (auth events, token operations)
+
+Test isolation: when ``APP_ENV=test`` is set (or ``PYTEST_CURRENT_TEST``
+is detected), file handlers are skipped. Only console logging is active.
 """
 
 import json
 import logging
 import logging.handlers
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -61,8 +65,13 @@ _LOG_FILES: dict[str, str] = {
 
 
 def setup_logging(log_dir: Path, level: str = "INFO", fmt: str = LOG_FORMAT_JSONL) -> None:
-    """Configure all loggers with file + console handlers."""
-    log_dir.mkdir(parents=True, exist_ok=True)
+    """Configure all loggers with file + console handlers.
+
+    When ``APP_ENV=test`` or ``PYTEST_CURRENT_TEST`` is set, only
+    the console handler is installed (no file output).
+    """
+    is_test = os.getenv("APP_ENV") == "test" or os.getenv("PYTEST_CURRENT_TEST") is not None
+
     root = logging.getLogger("garminsync")
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
 
@@ -72,28 +81,32 @@ def setup_logging(log_dir: Path, level: str = "INFO", fmt: str = LOG_FORMAT_JSON
     else:
         formatter = RedactingTextFormatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
-    # Console handler
+    # Console handler (always active)
     console = logging.StreamHandler()
     console.setLevel(getattr(logging, level.upper(), logging.INFO))
     console.setFormatter(formatter)
     root.addHandler(console)
 
-    # File handlers per subsystem
-    for logger_name, filename in _LOG_FILES.items():
-        lgr = logging.getLogger(logger_name)
-        lgr.setLevel(getattr(logging, level.upper(), logging.INFO))
-        lgr.propagate = False
-        handler = logging.handlers.RotatingFileHandler(
-            log_dir / filename,
-            maxBytes=10 * 1024 * 1024,
-            backupCount=5,
-            encoding="utf-8",
-        )
-        handler.setFormatter(formatter)
-        lgr.addHandler(handler)
-        _LOGGERS[logger_name] = lgr
+    # File handlers per subsystem (skipped in test mode)
+    if not is_test:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        for logger_name, filename in _LOG_FILES.items():
+            lgr = logging.getLogger(logger_name)
+            lgr.setLevel(getattr(logging, level.upper(), logging.INFO))
+            lgr.propagate = False
+            handler = logging.handlers.RotatingFileHandler(
+                log_dir / filename,
+                maxBytes=10 * 1024 * 1024,
+                backupCount=5,
+                encoding="utf-8",
+            )
+            handler.setFormatter(formatter)
+            lgr.addHandler(handler)
+            _LOGGERS[logger_name] = lgr
 
-    root.info("Logging initialized — dir=%s level=%s format=%s", log_dir, level, fmt)
+        root.info("Logging initialized — dir=%s level=%s format=%s", log_dir, level, fmt)
+    else:
+        root.debug("Logging initialized in TEST mode — file handlers disabled")
 
 
 def get_logger(name: str) -> logging.Logger:

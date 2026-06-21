@@ -188,14 +188,27 @@ class WithingsToGarminMapper:
             mapping_warnings=warnings,
         )
 
-        _log().info(
-            "Mapped measurement %s → candidate for %s: %d mapped, %d null, %d warnings",
-            measurement.source_measure_group_id,
-            garmin_date,
-            len(mapped),
-            len(null_fields),
-            len(warnings),
+        mapped_str = ", ".join(
+            f"{k}={v:.1f}" if isinstance(v, float) else f"{k}={v}"
+            for k, v in mapped.items()
         )
+        log_parts = [
+            f"candidate={garmin_date}",
+            f"mapped={{{mapped_str}}}" if mapped else "mapped={}",
+            f"null=[{', '.join(null_fields)}]" if null_fields else "null=[]",
+        ]
+        if not measurement.source_measure_group_id:
+            _log().info(
+                "Mapped measurement (no id) → %s — measurement_id_missing=true dedupe_key=%s",
+                garmin_date,
+                idempotency_key,
+            )
+        else:
+            _log().debug(
+                "Mapped measurement %s: %s",
+                measurement.source_measure_group_id,
+                " · ".join(log_parts),
+            )
         return candidate
 
     def _build_idempotency_key(self, measurement: BodyCompositionMeasurement) -> str:

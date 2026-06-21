@@ -75,7 +75,12 @@ class SyncEngine:
             raise ValueError("end_date must be greater than or equal to start_date")
 
         attempt_id = self._sync_store.start_attempt(start_date, end_date)
-        _log().info("Sync starting — period=%s → %s", start_date, end_date)
+        _log().info(
+            "Sync starting — period=%s → %s  lookback=%d lookahead=%d",
+            start_date, end_date,
+            self._settings.garmin_lookback_days,
+            self._settings.garmin_lookahead_days,
+        )
         if progress_callback:
             progress_callback(json.dumps({"type": "start", "period": f"{start_date} → {end_date}"}))
         try:
@@ -152,7 +157,14 @@ class SyncEngine:
             self._report_builder.save(report)
             self._sync_store.finish_attempt(attempt_id, "completed", report.summary.model_dump())
             _log().info(
-                "Sync completed — synced=%d existing=%d conflicts=%d invalid=%d failed=%d",
+                "Sync result — "
+                "candidates=%d "
+                "synced=%d "
+                "existing=%d "
+                "conflicts=%d "
+                "invalid=%d "
+                "failed=%d",
+                summary.candidates_count,
                 summary.synced_count,
                 summary.skipped_existing_count,
                 summary.conflicts_count,

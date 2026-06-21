@@ -612,7 +612,8 @@ function renderSyncActions(preview) {
   if (!w.connected || !g.token_valid) {
     const msg = document.createElement("p");
     msg.className = "sync-message";
-    msg.textContent = "Connecte Withings et Garmin dans les Réglages pour pouvoir synchroniser.";
+    if (!w.connected) msg.textContent = "Connexion Withings absente — va dans Réglages.";
+    else msg.textContent = "Connexion Garmin absente ou expirée — va dans Réglages.";
     panel.append(msg);
     return panel;
   }
@@ -778,7 +779,13 @@ async function runSync(mode) {
 
       if (data.type === "complete") {
         // Final progress — keep listening for the report event
-        state._syncLog.push({ type: "info", message: `✅ Sync terminée : ${data.synced} synchro, ${data.existing} doublons, ${data.conflicts} conflits` });
+        const parts = [];
+        if (data.synced > 0) parts.push(`${data.synced} envoyée(s)`);
+        if (data.existing > 0) parts.push(`${data.existing} déjà présent(es)`);
+        if (data.conflicts > 0) parts.push(`${data.conflicts} conflit(s)`);
+        if (data.invalid > 0) parts.push(`${data.invalid} invalide(s)`);
+        if (data.failed > 0) parts.push(`${data.failed} échec(s)`);
+        state._syncLog.push({ type: "info", message: `✅ Sync terminée : ${parts.join(", ") || "aucune mesure"}` });
         render();
       } else if (data.type === "report") {
         // Full report received — close and finish
@@ -803,9 +810,16 @@ async function runSync(mode) {
         render();
       } else if (data.type === "candidate") {
         const idx = `${data.index}/${data.total}`;
-        const badge = data.decision === "synced" ? "✅" : data.decision === "skipped_existing" ? "⏭️" : data.decision === "skipped_conflict" ? "⚠️" : data.decision === "failed" ? "❌" : "ℹ️";
+        const labelMap = {
+          synced: "✅ Nouvelle mesure envoyée à Garmin",
+          skipped_existing: "⏭️ Mesure déjà synchronisée",
+          skipped_conflict: "⚠️ Conflit : mesure Garmin existante différente",
+          failed: "❌ Échec technique",
+          invalid: "ℹ️ Mesure Withings incomplète ou invalide",
+        };
+        const label = labelMap[data.decision] || `ℹ️ ${data.decision}`;
         const w = data.weight_kg ? `${data.weight_kg} kg` : "—";
-        state._syncLog.push({ type: "candidate", message: `${badge} [${idx}] ${data.date} — ${w} → ${data.decision} : ${data.reason || ""}` });
+        state._syncLog.push({ type: "candidate", message: `[${idx}] ${data.date} — ${w} → ${label}` });
         render();
       }
     } catch (e) {
@@ -900,11 +914,11 @@ function renderSyncResult() {
   sumDiv.className = "sr-summary";
 
   const stats = [
-    ["Synchronisées", summary.synced_count, ""],
-    ["Doublons", summary.skipped_existing_count, "warn"],
-    ["Conflits", summary.conflicts_count, "warn"],
-    ["Invalides", summary.invalid_count, "bad"],
-    ["Échecs", summary.failed_count, "bad"],
+    ["Nouvelle mesure envoyée à Garmin", summary.synced_count, ""],
+    ["Mesure déjà synchronisée", summary.skipped_existing_count, "warn"],
+    ["Conflit : mesure Garmin existante différente", summary.conflicts_count, "warn"],
+    ["Mesure Withings incomplète ou invalide", summary.invalid_count, "bad"],
+    ["Échec technique", summary.failed_count, "bad"],
   ];
 
   for (const [label, val, cls] of stats) {
@@ -934,11 +948,11 @@ function renderSyncResult() {
       const date = c.measured_at_local || c.date || "";
       const weight = c.mapped_fields?.weight != null ? `${c.mapped_fields.weight} kg` : "";
       const decisionMeta = {
-        synced: { cls: "will_sync", txt: "Synchronisé" },
-        skipped_existing: { cls: "ignored", txt: "Déjà présent" },
-        skipped_conflict: { cls: "conflict", txt: "Conflit" },
-        failed: { cls: "conflict", txt: "Échec" },
-        invalid: { cls: "absent", txt: "Invalide" },
+        synced: { cls: "will_sync", txt: "Nouvelle mesure envoyée à Garmin" },
+        skipped_existing: { cls: "ignored", txt: "Mesure déjà synchronisée" },
+        skipped_conflict: { cls: "conflict", txt: "Conflit : mesure Garmin existante différente" },
+        failed: { cls: "conflict", txt: "Échec technique" },
+        invalid: { cls: "absent", txt: "Mesure Withings incomplète ou invalide" },
       };
       const meta = decisionMeta[c.decision] || { cls: "absent", txt: c.decision };
       const badge = document.createElement("span");
@@ -1048,7 +1062,13 @@ function renderSyncLog() {
       line.textContent = `Garmin : ${entry.weigh_ins} weigh-ins, ${entry.body_comp} compositions`;
     } else if (entry.type === "complete") {
       line.style.color = "var(--green)";
-      line.textContent = `✅ Terminé : ${entry.synced} sync, ${entry.existing} doublons, ${entry.conflicts} conflits`;
+      const parts = [];
+      if (entry.synced > 0) parts.push(`${entry.synced} envoyée(s)`);
+      if (entry.existing > 0) parts.push(`${entry.existing} déjà présent(es)`);
+      if (entry.conflicts > 0) parts.push(`${entry.conflicts} conflit(s)`);
+      if (entry.invalid > 0) parts.push(`${entry.invalid} invalide(s)`);
+      if (entry.failed > 0) parts.push(`${entry.failed} échec(s)`);
+      line.textContent = `✅ Terminé : ${parts.join(", ") || "aucune mesure à traiter"}`;
     } else {
       line.textContent = JSON.stringify(entry);
     }
@@ -1328,7 +1348,8 @@ function renderCompactSyncPanel(preview) {
   if (!w.connected || !g.token_valid) {
     const msg = document.createElement("p");
     msg.className = "spc-info";
-    msg.textContent = "Connecte Withings et Garmin dans les Réglages pour pouvoir synchroniser.";
+    if (!w.connected) msg.textContent = "Connexion Withings absente — va dans Réglages.";
+    else msg.textContent = "Connexion Garmin absente ou expirée — va dans Réglages.";
     panel.append(msg);
     return panel;
   }

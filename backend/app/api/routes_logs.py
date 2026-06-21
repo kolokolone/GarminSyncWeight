@@ -35,6 +35,8 @@ def get_logs(
         return LogResult(service=service, lines=["No log entries yet."], truncated=False)
 
     all_lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
-    selected = all_lines[-lines:]
+    # Filter out lines that escaped from pytest worker directories
+    filtered = [ln for ln in all_lines if "pytest-of-" not in ln]
+    selected = filtered[-lines:]
     safe = redact_lines(selected)
     return LogResult(service=service, lines=safe, truncated=len(all_lines) > lines)

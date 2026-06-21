@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     log_format: Literal["jsonl", "text"] = "jsonl"
 
     # ─── Version ──────────────────────────────────────────────
-    app_version: str = "0.2.5"
+    app_version: str = "0.2.6"
 
     @field_validator("app_host")
     @classmethod
