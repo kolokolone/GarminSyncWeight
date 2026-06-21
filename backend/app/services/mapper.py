@@ -122,15 +122,32 @@ class WithingsToGarminMapper:
             )
         null_fields.append("percent_hydration")
 
-        # ── Fields that are never mapped without direct source ──
-        null_fields.extend([
-            "visceral_fat_mass", "basal_met", "active_met",
-            "physique_rating", "metabolic_age", "visceral_fat_rating",
-        ])
+        basal_met = None
+        if measurement.basal_met is not None:
+            basal_met = measurement.basal_met
+            mapped["basal_met"] = float(basal_met)
+        else:
+            null_fields.append("basal_met")
+
+        metabolic_age = None
+        if measurement.metabolic_age is not None:
+            metabolic_age = int(measurement.metabolic_age)
+            mapped["metabolic_age"] = metabolic_age
+        else:
+            null_fields.append("metabolic_age")
+
+        visceral_fat_rating = None
+        if measurement.visceral_fat_rating is not None:
+            visceral_fat_rating = int(measurement.visceral_fat_rating)
+            mapped["visceral_fat_rating"] = visceral_fat_rating
+        else:
+            null_fields.append("visceral_fat_rating")
+
+        # ── Fields that are not supported or not directly provided ──
+        null_fields.extend(["visceral_fat_mass", "active_met", "physique_rating"])
         warnings.append(
-            "visceral_fat_mass, basal_met, active_met, physique_rating, "
-            "metabolic_age, visceral_fat_rating: no reliable Withings "
-            "source — set to null"
+            "visceral_fat_mass, active_met, physique_rating: "
+            "no reliable Withings source — set to null"
         )
 
         # ── Combine all warnings from measurement ──────────────
@@ -145,11 +162,11 @@ class WithingsToGarminMapper:
             visceral_fat_mass=None,
             bone_mass=bone_mass,
             muscle_mass=muscle_mass,
-            basal_met=None,
+            basal_met=basal_met,
             active_met=None,
             physique_rating=None,
-            metabolic_age=None,
-            visceral_fat_rating=None,
+            metabolic_age=metabolic_age,
+            visceral_fat_rating=visceral_fat_rating,
             bmi=bmi,
             source=measurement.source,
             source_measure_group_id=measurement.source_measure_group_id,

@@ -23,16 +23,17 @@ def _log() -> Any:
     return _logger
 
 
-# Withings measure type identifiers
-# See: https://developer.withings.com/api-reference/#operation/measure-getmeas
-# These values should be verified against current Withings documentation.
+# Withings measure type identifiers from the official Measure - Getmeas documentation.
 MEASURE_TYPE_WEIGHT = 1  # kg
 MEASURE_TYPE_FAT_FREE_MASS = 5  # kg
 MEASURE_TYPE_FAT_RATIO = 6  # % (or ratio)
 MEASURE_TYPE_FAT_MASS = 8  # kg
-MEASURE_TYPE_MUSCLE_MASS = 76  # kg (hypothesis — verify)
-MEASURE_TYPE_HYDRATION = 77  # kg (hypothesis — verify)
-MEASURE_TYPE_BONE_MASS = 88  # kg (hypothesis — verify)
+MEASURE_TYPE_MUSCLE_MASS = 76  # kg
+MEASURE_TYPE_HYDRATION = 77  # kg water mass
+MEASURE_TYPE_BONE_MASS = 88  # kg
+MEASURE_TYPE_VISCERAL_FAT = 170  # unitless/rating-like value
+MEASURE_TYPE_BASAL_MET = 226  # kcal
+MEASURE_TYPE_METABOLIC_AGE = 227  # years
 
 
 class WithingsParser:
@@ -93,9 +94,6 @@ class WithingsParser:
 
         # ── Device & attribution ───────────────────────────────
         device_id = str(group.get("deviceid", "")) if group.get("deviceid") else None
-        category = group.get("category")
-        attrib = group.get("attrib")
-
         # ── Parse individual measures ──────────────────────────
         parsed: dict[int, Decimal] = {}
         for m in raw_measures:
@@ -114,6 +112,9 @@ class WithingsParser:
         muscle_mass_kg = parsed.get(MEASURE_TYPE_MUSCLE_MASS)
         hydration_mass_kg = parsed.get(MEASURE_TYPE_HYDRATION)
         bone_mass_kg = parsed.get(MEASURE_TYPE_BONE_MASS)
+        visceral_fat = parsed.get(MEASURE_TYPE_VISCERAL_FAT)
+        basal_met = parsed.get(MEASURE_TYPE_BASAL_MET)
+        metabolic_age = parsed.get(MEASURE_TYPE_METABOLIC_AGE)
 
         # BMI — only if height is explicitly configured
         bmi: Decimal | None = None
@@ -140,6 +141,9 @@ class WithingsParser:
             MEASURE_TYPE_MUSCLE_MASS,
             MEASURE_TYPE_HYDRATION,
             MEASURE_TYPE_BONE_MASS,
+            MEASURE_TYPE_VISCERAL_FAT,
+            MEASURE_TYPE_BASAL_MET,
+            MEASURE_TYPE_METABOLIC_AGE,
         }
         unknown = found_types - known_types
         if unknown:
@@ -160,10 +164,11 @@ class WithingsParser:
             hydration_mass_kg=hydration_mass_kg,
             hydration_percent=None,
             bmi=bmi,
+            visceral_fat_rating=int(visceral_fat) if visceral_fat is not None else None,
+            basal_met=basal_met,
+            metabolic_age=int(metabolic_age) if metabolic_age is not None else None,
             raw={"group": group, "parsed_measures": {str(k): str(v) for k, v in parsed.items()}},
             warnings=warnings,
-            category=category,
-            attrib=attrib,
         )
 
     @staticmethod
