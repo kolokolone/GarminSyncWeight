@@ -30,6 +30,8 @@ from app.storage.sync_store import SyncStore
 from app.storage.token_store import TokenStore
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+router = APIRouter(prefix="/api/measurements", tags=["measurements"])
+
 
 def _build_services(settings: Settings) -> tuple:
     token_store = TokenStore(settings.resolved_data_dir)
