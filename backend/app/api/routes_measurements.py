@@ -6,7 +6,7 @@ for the Dashboard UI.
 """
 
 import json
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from app.cache import get_cache
@@ -143,13 +143,13 @@ def _build_field_mapping(
     # Fields from candidate warnings / ignored
     if candidate:
         for field_name, field_val in (candidate.ignored_fields or {}).items():
-            mapping.append(
+                mapping.append(
                 FieldMappingEntry(
                     label=field_name.replace("_", " ").title(),
                     withings_value=_fmt_val(field_val),
                     garmin_value=None,
                     status="ignored",
-                    message=ignored_reason,
+                    message="Ignoré volontairement",
                 )
             )
 
