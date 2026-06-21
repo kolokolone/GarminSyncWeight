@@ -883,7 +883,26 @@ function renderDashboard() {
         link("Ouvrir les réglages", "/reglages")
       ));
     } else {
-      view.append(loadingState("Chargement des mesures…"));
+      // Auto-trigger data load if not already loading and either never fetched or stale
+      const needsLoad = state._dashboardFetchedAt == null
+        || (Date.now() - state._dashboardFetchedAt) > 10000;
+      if (needsLoad && !state._dashboardLoading) {
+        loadDashboardData();
+        // loadDashboardData sets _dashboardLoading = true, calls render() on completion
+      }
+
+      view.append(loadingState("Chargement des mesures"));
+      // Retry button shown when a previous fetch failed (fetchedAt is set but preview is null)
+      if (state._dashboardFetchedAt != null && !state.preview) {
+        const retryBtn = btn("Réessayer", async () => {
+          state._dashboardFetchedAt = null; // force re-fetch
+          render();
+          await loadDashboardData();
+          render();
+        }, "secondary");
+        retryBtn.style.marginTop = "12px";
+        view.append(retryBtn);
+      }
     }
   }
 
@@ -924,16 +943,17 @@ function renderDashboard() {
 /* ── Dashboard data loading ──────────────────────────────────── */
 
 async function loadDashboardData() {
+  if (state._dashboardLoading) return;
   const w = state.withings || {};
   const g = state.garmin || {};
   if (!w.connected || !g.token_valid) return;
+  state._dashboardLoading = true;
 
   // Session cache: skip refetch if fetched < 10s ago
   const now = Date.now();
   const CACHE_TTL = 10000;
   if (state._dashboardFetchedAt && (now - state._dashboardFetchedAt) < CACHE_TTL) {
-    // stale enough to refetch in background?
-    // For now, just skip to avoid flash re-renders during fast nav
+    state._dashboardLoading = false;
     return;
   }
 
@@ -949,6 +969,7 @@ async function loadDashboardData() {
   else state.recent = null;
 
   state._dashboardFetchedAt = Date.now();
+  state._dashboardLoading = false;
   render();
 }
 
@@ -1000,7 +1021,7 @@ function renderHistorique() {
   }
 
   if (loading) {
-    view.append(loadingState("Vérification des statuts Garmin…"));
+    view.append(loadingState("Vérification des statuts Garmin"));
   } else if (!items || items.length === 0) {
     view.append(emptyState("Aucune mesure", "Aucune mesure Withings trouvée pour la période récente."));
     if (state.preview?.latest_measurement) {
