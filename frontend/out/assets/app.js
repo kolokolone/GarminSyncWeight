@@ -1317,131 +1317,169 @@ function renderCompactHistory(items) {
   return wrapper;
 }
 
-/* ── Compact sync panel (right column) ───────────────────────── */
+/* ── Compact sync panel — deux sous-cartes ──────────────────── */
 
 function renderCompactSyncPanel(preview) {
   const panel = document.createElement("div");
   panel.className = "sync-panel-compact";
 
-  const title = document.createElement("div");
-  title.className = "spc-title";
-  title.textContent = "Synchronisation";
-  panel.append(title);
+  const eye = document.createElement("p"); eye.className = "eyebrow"; eye.textContent = "Synchronisation";
+  panel.append(eye);
 
-  const info = document.createElement("div");
-  info.className = "spc-info";
-
-  // Decision status
+  const w = state.withings || {};
+  const g = state.garmin || {};
   const decision = preview?.decision;
-  if (decision?.message) {
-    info.innerHTML = `<span style="color:${decision.can_sync ? 'var(--green)' : 'var(--amber)'}">${decision.message}</span>`;
-  } else {
-    info.textContent = "Vérification des statuts disponible.";
+
+  if (!w.connected || !g.token_valid) {
+    const msg = document.createElement("p");
+    msg.className = "spc-info";
+    msg.textContent = "Connecte Withings et Garmin dans les Réglages pour pouvoir synchroniser.";
+    panel.append(msg);
+    return panel;
   }
-  panel.append(info);
 
-  // Actions
-  const actions = document.createElement("div");
-  actions.className = "spc-actions";
+  if (!preview || preview.status !== "ready") {
+    const msg = document.createElement("p");
+    msg.className = "spc-info";
+    msg.textContent = preview?.message || "Prévisualisation indisponible.";
+    panel.append(msg);
+    return panel;
+  }
 
-  // Sync latest button
-  const syncLatestBtn = document.createElement("button");
-  syncLatestBtn.textContent = "Sync dernière mesure";
-  syncLatestBtn.disabled = !decision?.can_sync;
-  syncLatestBtn.addEventListener("click", () => runSync("latest"));
-  actions.append(syncLatestBtn);
+  // ── Two-column grid ──────────────────────────────────────
+  const grid = document.createElement("div");
+  grid.className = "sync-actions-grid";
 
-  // Period sync button
-  const periodBtn = document.createElement("button");
-  periodBtn.className = "secondary";
-  periodBtn.textContent = "Sync période";
-  periodBtn.addEventListener("click", () => runSync("period"));
-  actions.append(periodBtn);
+  // ── Block A: Dernière mesure ─────────────────────────────
+  const blockA = document.createElement("div");
+  blockA.className = "sync-action-block";
 
-  panel.append(actions);
+  const aTitle = document.createElement("div");
+  aTitle.style.fontSize = "15px";
+  aTitle.style.fontWeight = "700";
+  aTitle.style.marginBottom = "6px";
+  aTitle.textContent = "Dernière mesure";
+  blockA.append(aTitle);
 
-  // Quick period picker
-  if (!state._periodDays) state._periodDays = 1;
+  const aDesc = document.createElement("p");
+  aDesc.style.color = "var(--muted)";
+  aDesc.style.fontSize = "13px";
+  aDesc.style.margin = "0 0 12px";
+  aDesc.textContent = decision?.message || "Synchronise uniquement la mesure affichée en haut.";
+  blockA.append(aDesc);
+
+  const syncBtn = document.createElement("button");
+  syncBtn.textContent = "Synchroniser cette mesure";
+  syncBtn.disabled = !decision?.can_sync;
+  if (!decision?.can_sync) syncBtn.title = "Aucune nouvelle mesure à synchroniser.";
+  syncBtn.addEventListener("click", () => runSync("latest"));
+  blockA.append(syncBtn);
+
+  grid.append(blockA);
+
+  // ── Block B: Période ─────────────────────────────────────
+  const blockB = document.createElement("div");
+  blockB.className = "sync-action-block";
+
+  const bTitle = document.createElement("div");
+  bTitle.style.fontSize = "15px";
+  bTitle.style.fontWeight = "700";
+  bTitle.style.marginBottom = "6px";
+  bTitle.textContent = "Période";
+  blockB.append(bTitle);
+
+  const bDesc = document.createElement("p");
+  bDesc.style.color = "var(--muted)";
+  bDesc.style.fontSize = "13px";
+  bDesc.style.margin = "0 0 10px";
+  bDesc.textContent = "Choisis une période, puis lance la synchronisation.";
+  blockB.append(bDesc);
+
+  // Period picker (pills)
   const picker = document.createElement("div");
   picker.className = "period-picker";
-  picker.style.marginTop = "10px";
-  const opts = [
+
+  if (!state._periodDays) state._periodDays = 1;
+  const periodOpts = [
     ["1j", 1],
     ["7j", 7],
     ["30j", 30],
   ];
-  for (const [label, days] of opts) {
+  for (const [label, days] of periodOpts) {
     const pill = document.createElement("button");
     pill.className = "period-pill";
     if (state._periodDays === days) pill.classList.add("is-active");
     pill.textContent = label;
-    pill.style.padding = "4px 10px";
-    pill.style.fontSize = "11px";
     pill.addEventListener("click", () => {
       state._periodDays = days;
       render();
     });
     picker.append(pill);
   }
-  panel.append(picker);
+  blockB.append(picker);
 
   // Period summary
   const pEnd = getLocalDate();
   const pStart = new Date(Date.now() - (state._periodDays - 1) * 86400000);
   const pStartStr = pStart.toISOString().slice(0, 10);
-  const fmt = (s) => { const d = new Date(s + "T00:00:00"); return d.toLocaleDateString("fr-FR", { day: "numeric", month: "long" }); };
-  const summary = document.createElement("div");
-  summary.style.color = "var(--muted)";
-  summary.style.fontSize = "11px";
-  summary.style.marginTop = "6px";
-  summary.textContent = `${fmt(pStartStr)} → ${fmt(pEnd)}`;
-  panel.append(summary);
+  const fmt = (s) => { const d = new Date(s + "T00:00:00"); return d.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" }); };
+  const periodSummary = document.createElement("div");
+  periodSummary.className = "sync-period-summary";
+  periodSummary.textContent = `Période sélectionnée : ${fmt(pStartStr)} → ${fmt(pEnd)}`;
+  blockB.append(periodSummary);
 
-  // Last sync info
+  const periodSyncBtn = document.createElement("button");
+  periodSyncBtn.textContent = "Synchroniser la période";
+  periodSyncBtn.style.marginTop = "10px";
+  periodSyncBtn.addEventListener("click", () => runSync("period"));
+  blockB.append(periodSyncBtn);
+
+  grid.append(blockB);
+  panel.append(grid);
+
+  // Footer : last sync + manual + refresh
   const s = state.status || {};
+  const footer = document.createElement("div");
+  footer.style.marginTop = "14px";
+  footer.style.paddingTop = "14px";
+  footer.style.borderTop = "1px solid var(--line)";
+  footer.style.fontSize = "12px";
+  footer.style.color = "var(--muted)";
+  footer.style.display = "flex";
+  footer.style.flexWrap = "wrap";
+  footer.style.gap = "8px";
+  footer.style.alignItems = "center";
+
   if (s.last_sync) {
-    const lastSync = document.createElement("div");
-    lastSync.style.marginTop = "12px";
-    lastSync.style.paddingTop = "12px";
-    lastSync.style.borderTop = "1px solid var(--line)";
-    lastSync.style.fontSize = "11px";
-    lastSync.style.color = "var(--muted)";
     const syncDate = new Date(s.last_sync).toLocaleString("fr-FR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-    lastSync.textContent = `Dernière sync : ${syncDate}`;
-    if (s.sync_count != null) {
-      lastSync.textContent += ` · ${s.sync_count} sync`;
-    }
-    panel.append(lastSync);
+    const label = document.createElement("span");
+    label.textContent = `Dernière sync : ${syncDate}`;
+    if (s.sync_count != null) label.textContent += ` · ${s.sync_count} mesure${s.sync_count > 1 ? "s" : ""}`;
+    footer.append(label);
   }
 
-  // Manual measurement button
   const manualBtn = document.createElement("button");
   manualBtn.className = "secondary";
   manualBtn.textContent = "+ Ajout manuel";
-  manualBtn.style.marginTop = "12px";
   manualBtn.style.fontSize = "12px";
-  manualBtn.style.padding = "8px 12px";
+  manualBtn.style.padding = "7px 12px";
   manualBtn.addEventListener("click", () => showManualModal());
-  panel.append(manualBtn);
+  footer.append(manualBtn);
 
-  // Refresh button
   const refreshBtn = document.createElement("button");
   refreshBtn.className = "secondary";
-  refreshBtn.textContent = "Rafraîchir";
-  refreshBtn.style.marginTop = "6px";
+  refreshBtn.textContent = "↻ Recharger";
   refreshBtn.style.fontSize = "12px";
-  refreshBtn.style.padding = "8px 12px";
+  refreshBtn.style.padding = "7px 12px";
   refreshBtn.addEventListener("click", async () => {
-    try {
-      state.preview = null;
-      render();
-      state.preview = await api("/api/measurements/latest?days=30");
-      state.recent = await api("/api/measurements/recent?days=30");
-    } catch {}
+    state._dashboardFetchedAt = null;
+    render();
+    await loadDashboardData();
     render();
   });
-  panel.append(refreshBtn);
+  footer.append(refreshBtn);
 
+  panel.append(footer);
   return panel;
 }
 
