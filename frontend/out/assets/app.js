@@ -1134,7 +1134,7 @@ function renderDashboard() {
   return view;
 }
 
-/* ── Compact preview (inline, fewer colors) ──────────────────── */
+/* ── Compact preview (big weight + metric tiles) ─────────────── */
 
 function renderCompactPreview(preview) {
   const lm = preview.latest_measurement;
@@ -1143,34 +1143,51 @@ function renderCompactPreview(preview) {
   const card = document.createElement("div");
   card.className = "compact-preview";
 
-  // Weight (prominent but compact)
-  if (lm.weight_kg != null) {
-    const w = document.createElement("div");
-    w.className = "cp-weight";
-    w.innerHTML = `${lm.weight_kg.toFixed(1)} <small>kg</small>`;
-    card.append(w);
-  }
-
-  // Details
-  const details = document.createElement("div");
-  details.className = "cp-details";
+  // Head : eyebrow + device/date
+  const head = document.createElement("div");
+  head.className = "cp-head";
+  const eye = document.createElement("p");
+  eye.className = "eyebrow";
+  eye.textContent = "Dernière mesure détectée";
+  head.append(eye);
+  const dev = document.createElement("div");
+  dev.className = "cp-device";
   const dateStr = lm.measured_at
     ? new Date(lm.measured_at).toLocaleString("fr-FR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
     : "date inconnue";
-  const device = lm.device || "Body Cardio+";
-  details.innerHTML = `<strong>${device}</strong> · ${dateStr}`;
+  dev.textContent = `${lm.device || "Body Cardio+"} · ${dateStr}`;
+  head.append(dev);
+  card.append(head);
 
-  // Fat % if available
-  if (lm.fat_percent != null) {
-    details.innerHTML += `<br>Masse grasse : ${lm.fat_percent.toFixed(1)}%`;
+  // Weight (big)
+  if (lm.weight_kg != null) {
+    const w = document.createElement("div");
+    w.className = "cp-weight";
+    w.innerHTML = `${lm.weight_kg.toFixed(1)} <span class="cp-weight-unit">kg</span>`;
+    card.append(w);
   }
-  card.append(details);
+
+  // Tags (dedup status, decision)
+  const tags = document.createElement("div");
+  tags.className = "cp-tags";
+  if (preview.deduplication) {
+    const tag = document.createElement("span");
+    tag.className = `cp-tag ${preview.decision?.can_sync ? 'ok' : (preview.deduplication.status === 'conflict' ? 'warn' : '')}`;
+    tag.textContent = preview.deduplication.message || preview.deduplication.status;
+    tags.append(tag);
+  }
+  if (preview.decision && !preview.decision.can_sync && preview.decision.status !== "blocked") {
+    const tag = document.createElement("span");
+    tag.className = "cp-tag warn";
+    tag.textContent = preview.decision.message || "Non synchronisable";
+    tags.append(tag);
+  }
+  card.append(tags);
 
   // Metric tiles (BMI calculated locally)
   if (lm.weight_kg != null) {
     const grid = document.createElement("div");
     grid.className = "metric-grid";
-    grid.style.marginTop = "12px";
 
     const tiles = [];
     if (lm.fat_percent != null) tiles.push(["Masse grasse", lm.fat_percent, "%"]);
@@ -1197,24 +1214,6 @@ function renderCompactPreview(preview) {
     card.append(grid);
   }
 
-  // Tags (dedup status, decision)
-  const tags = document.createElement("div");
-  tags.className = "cp-tags";
-
-  if (preview.deduplication) {
-    const tag = document.createElement("span");
-    tag.className = `cp-tag ${preview.decision?.can_sync ? 'ok' : (preview.deduplication.status === 'conflict' ? 'warn' : '')}`;
-    tag.textContent = preview.deduplication.message || preview.deduplication.status;
-    tags.append(tag);
-  }
-  if (preview.decision && !preview.decision.can_sync && preview.decision.status !== "blocked") {
-    const tag = document.createElement("span");
-    tag.className = "cp-tag warn";
-    tag.textContent = preview.decision.message || "Non synchronisable";
-    tags.append(tag);
-  }
-
-  card.append(tags);
   return card;
 }
 
