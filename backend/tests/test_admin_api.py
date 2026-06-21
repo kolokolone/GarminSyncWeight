@@ -1,8 +1,11 @@
 """Tests for the local admin UI and Garmin auth API surface."""
 
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+import httpx
+import pytest
 from app.config import Settings, get_settings
 from app.main import app
 from app.services.withings_auth import WithingsAuthService
@@ -141,3 +144,65 @@ def test_withings_authorize_url_contains_required_oauth_params(tmp_path: Path) -
     assert query["redirect_uri"] == ["http://127.0.0.1:8010/api/withings/auth/callback"]
     assert query["scope"] == ["user.metrics"]
     assert query["state"] == [state]
+
+
+@pytest.mark.asyncio
+async def test_withings_connection_check_uses_metrics_scope_endpoint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Connection check must use Measure/Getmeas, not a user.info endpoint."""
+    settings = Settings(  # type: ignore[call-arg]
+        withings_client_id="client-id",
+        withings_client_secret="client-secret",
+        withings_scope="user.metrics",
+        data_dir=tmp_path,
+    )
+    store = TokenStore(tmp_path)
+    store.save_token(
+        {
+            "userid": "42",
+            "access_token": "access-token",
+            "refresh_token": "refresh-token",
+            "scope": "user.metrics",
+            "expires_in": 3600,
+            "token_type": "Bearer",
+        }
+    )
+    calls: list[dict[str, Any]] = []
+
+    class Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return {"status": 100, "body": {}}
+
+    class Client:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            return None
+
+        async def __aenter__(self) -> "Client":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def post(
+            self,
+            url: str,
+            data: dict[str, str],
+            headers: dict[str, str],
+        ) -> Response:
+            calls.append({"url": url, "data": data, "headers": headers})
+            return Response()
+
+    monkeypatch.setattr(httpx, "AsyncClient", Client)
+
+    result = await WithingsAuthService(settings, store).check_connection()
+
+    assert result["connected"] is True
+    assert result["state"] == "connected"
+    assert calls[0]["url"].endswith("/measure")
+    assert calls[0]["data"]["action"] == "getmeas"
+    assert calls[0]["data"]["meastypes"] == "1"

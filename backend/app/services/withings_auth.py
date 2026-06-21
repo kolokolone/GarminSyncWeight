@@ -15,6 +15,7 @@ Security:
 """
 
 import secrets
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode
 
@@ -24,7 +25,7 @@ from app.storage.token_store import TokenStore
 
 WITHINGS_AUTH_URL = "https://account.withings.com/oauth2_user/authorize2"
 WITHINGS_TOKEN_URL = "https://wbsapi.withings.net/v2/oauth2"
-WITHINGS_USER_URL = "https://wbsapi.withings.net/v2/user"
+WITHINGS_MEASURE_URL = "https://wbsapi.withings.net/measure"
 
 _logger = None
 
@@ -142,18 +143,26 @@ class WithingsAuthService:
         return str(token["access_token"])
 
     async def check_connection(self) -> dict[str, Any]:
-        """Perform an active Withings API call and return safe connection status."""
+        """Verify the Withings connection using the required user.metrics scope."""
         try:
             token = await self.get_valid_access_token()
+            end_at = datetime.now(UTC)
+            start_at = end_at - timedelta(days=1)
             async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.post(
-                    WITHINGS_USER_URL,
-                    data={"action": "getdevice"},
+                    WITHINGS_MEASURE_URL,
+                    data={
+                        "action": "getmeas",
+                        "meastypes": "1",
+                        "category": "1",
+                        "startdate": str(int(start_at.timestamp())),
+                        "enddate": str(int(end_at.timestamp())),
+                    },
                     headers={"Authorization": f"Bearer {token}"},
                 )
             resp.raise_for_status()
             body = resp.json()
-            if body.get("status") == 0:
+            if body.get("status") in (0, 100):
                 return {
                     "connected": True,
                     "state": "connected",

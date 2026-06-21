@@ -6,18 +6,24 @@ echo Admin local: http://127.0.0.1:8010
 echo API docs:    http://127.0.0.1:8010/docs
 echo.
 
-where uv >nul 2>nul
-if errorlevel 1 (
-    echo [ERREUR] uv est introuvable. Installez uv ou ajoutez-le au PATH.
-    echo.
-    pause
-    exit /b 1
-)
-
 set "PYTHONUTF8=1"
 set "PYTHONIOENCODING=utf-8"
+set "PYTHONPATH=%CD%\backend"
 
-uv run uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8010
+set "PYTHON_EXE=%CD%\.venv\Scripts\python.exe"
+if exist "%PYTHON_EXE%" (
+    "%PYTHON_EXE%" -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8010
+) else (
+    where uv >nul 2>nul
+    if errorlevel 1 (
+        echo [ERREUR] .venv introuvable et uv est introuvable.
+        echo Lancez d'abord: uv sync
+        echo.
+        pause
+        exit /b 1
+    )
+    uv run python -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8010
+)
 
 set "EXIT_CODE=%ERRORLEVEL%"
 echo.
