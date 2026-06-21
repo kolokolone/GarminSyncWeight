@@ -618,23 +618,9 @@ textarea { min-height: 260px; font-family: Consolas, monospace; }
 .error-state .error-title { font-weight: 700; font-size: 16px; margin-bottom: 4px; }
 .error-state .error-detail { color: var(--muted); font-size: 13px; }
 
-/* ── Dashboard 2-col grid ──────────────────────────────────────── */
+/* ── Dashboard single-column flow ─────────────────────────────── */
 
-.dashboard-grid {
-  display: grid;
-  grid-template-columns: 1fr 340px;
-  gap: 20px;
-  align-items: start;
-}
-
-.dashboard-left {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  min-width: 0;
-}
-
-.dashboard-right {
+.dashboard-flow {
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -808,7 +794,7 @@ textarea { min-height: 260px; font-family: Consolas, monospace; }
   .metric-grid { grid-template-columns: repeat(2, 1fr); }
   .status-bar { font-size: 12px; gap: 8px; }
   .status-bar .sep { display: none; }
-  .dashboard-grid { grid-template-columns: 1fr; }
+  .dashboard-flow { gap: 12px; }
   .compact-preview { flex-wrap: wrap; }
   .compact-preview .cp-tags { margin-left: 0; }
 }

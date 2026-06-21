@@ -1081,66 +1081,55 @@ function renderDashboard() {
     return view;
   }
 
-  // ── 2-column grid ─────────────────────────────────────────────
-  const grid = document.createElement("div");
-  grid.className = "dashboard-grid";
-
-  // ── LEFT COLUMN ───────────────────────────────────────────────
-  const left = document.createElement("div");
-  left.className = "dashboard-left";
+  // ── Single column flow ────────────────────────────────────────
+  const flow = document.createElement("div");
+  flow.className = "dashboard-flow";
 
   // Compact preview + sparkline + compact history
   if (state.preview) {
-    left.append(renderCompactPreview(state.preview));
+    flow.append(renderCompactPreview(state.preview));
   }
 
   // Sparkline
   if (state.recent && state.recent.items) {
-    left.append(renderSparkline(state.recent.items));
+    flow.append(renderSparkline(state.recent.items));
   } else if (state.preview?.status === "ready") {
     const wrap = document.createElement("div");
     wrap.className = "sparkline-wrapper";
     const eye = document.createElement("p"); eye.className = "eyebrow"; eye.textContent = "Évolution récente";
     wrap.append(eye);
     wrap.append(emptyState("Données insuffisantes", "Au moins 2 mesures sont nécessaires pour le graphique."));
-    left.append(wrap);
+    flow.append(wrap);
   }
 
   // Compact history (last 10 items)
   if (state.recent && state.recent.items && state.recent.items.length > 0) {
-    left.append(renderCompactHistory(state.recent.items));
+    flow.append(renderCompactHistory(state.recent.items));
   }
 
-  // Mapping table (collapsible)
+  // Mapping table
   if (state.preview && state.preview.status === "ready" && state.preview.field_mapping?.length) {
-    left.append(renderMappingTable(state.preview));
+    flow.append(renderMappingTable(state.preview));
   }
 
-  grid.append(left);
-
-  // ── RIGHT COLUMN ──────────────────────────────────────────────
-  const right = document.createElement("div");
-  right.className = "dashboard-right";
-
-  // Sync control panel (compact)
+  // Sync panel below mapping table
   if (state.preview && state.preview.status === "ready") {
-    right.append(renderCompactSyncPanel(state.preview));
+    flow.append(renderCompactSyncPanel(state.preview));
   }
 
   // Progress bar during sync
   const prog = renderProgressBar();
-  if (prog) right.append(prog);
+  if (prog) flow.append(prog);
 
   // Sync result
   const syncRes = renderSyncResult();
-  if (syncRes) right.append(syncRes);
+  if (syncRes) flow.append(syncRes);
 
   // Sync log (SSE streaming)
   const syncLog = renderSyncLog();
-  if (syncLog) right.append(syncLog);
+  if (syncLog) flow.append(syncLog);
 
-  grid.append(right);
-  view.append(grid);
+  view.append(flow);
 
   return view;
 }
@@ -1176,6 +1165,37 @@ function renderCompactPreview(preview) {
     details.innerHTML += `<br>Masse grasse : ${lm.fat_percent.toFixed(1)}%`;
   }
   card.append(details);
+
+  // Metric tiles (BMI calculated locally)
+  if (lm.weight_kg != null) {
+    const grid = document.createElement("div");
+    grid.className = "metric-grid";
+    grid.style.marginTop = "12px";
+
+    const tiles = [];
+    if (lm.fat_percent != null) tiles.push(["Masse grasse", lm.fat_percent, "%"]);
+    if (lm.muscle_mass_kg != null) tiles.push(["Masse musculaire", lm.muscle_mass_kg, "kg"]);
+    if (lm.bone_mass_kg != null) tiles.push(["Masse osseuse", lm.bone_mass_kg, "kg"]);
+
+    // BMI : calcul local depuis la taille stockée + poids
+    const hCm = state._heightCm;
+    if (hCm && hCm > 0) {
+      const hM = hCm / 100;
+      const bmi = lm.weight_kg / (hM * hM);
+      tiles.push(["IMC", Math.round(bmi * 10) / 10]);
+    } else if (lm.bmi != null) {
+      tiles.push(["IMC", lm.bmi]);
+    }
+
+    if (lm.basal_metabolic_rate_kcal != null) tiles.push(["Métabo. basal", lm.basal_metabolic_rate_kcal, "kcal"]);
+    if (lm.metabolic_age != null) tiles.push(["Âge métabo.", lm.metabolic_age, "ans"]);
+    if (lm.visceral_fat_rating != null) tiles.push(["Graisse viscérale", lm.visceral_fat_rating]);
+
+    for (const [label, val, unit] of tiles) {
+      grid.append(metricTile(label, val, unit));
+    }
+    card.append(grid);
+  }
 
   // Tags (dedup status, decision)
   const tags = document.createElement("div");
