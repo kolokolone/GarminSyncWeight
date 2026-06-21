@@ -531,16 +531,41 @@ function renderMappingTable(preview) {
     unsupported: "Non supporté",
   };
 
+  // BMI calculé localement si Withings ne le fournit pas
+  const lm = preview.latest_measurement;
+  const localBmi = (() => {
+    if (lm?.weight_kg == null) return null;
+    const hCm = state._heightCm;
+    if (hCm && hCm > 0) {
+      const hM = hCm / 100;
+      return Math.round((lm.weight_kg / (hM * hM)) * 10) / 10;
+    }
+    return null;
+  })();
+
   for (const f of fields) {
     const row = document.createElement("tr");
     const label = document.createElement("td"); label.className = "field-label"; label.textContent = f.label;
-    const wv = document.createElement("td"); wv.className = "field-withings"; wv.textContent = f.withings_value || "—";
-    const gv = document.createElement("td"); gv.className = "field-garmin"; gv.textContent = f.garmin_value || "—";
+
+    // Calcul local IMC si manquant
+    let wvText = f.withings_value || "—";
+    let gvText = f.garmin_value || "—";
+    let status = f.status;
+    let msg = f.message || statusLabels[f.status] || f.status;
+
+    if (f.label === "IMC" && !f.withings_value && localBmi != null) {
+      wvText = `${localBmi}`;
+      gvText = wvText;
+      status = "calculated";
+      msg = "Calculé (taille + poids)";
+    }
+
+    const wv = document.createElement("td"); wv.className = "field-withings"; wv.textContent = wvText;
+    const gv = document.createElement("td"); gv.className = "field-garmin"; gv.textContent = gvText;
     const dc = document.createElement("td");
     const badge = document.createElement("span");
-    badge.className = `field-decision ${f.status}`;
-    const labelText = statusLabels[f.status] || f.status;
-    badge.textContent = f.message || labelText;
+    badge.className = `field-decision ${status}`;
+    badge.textContent = msg;
     dc.append(badge);
 
     row.append(label, wv, gv, dc);
