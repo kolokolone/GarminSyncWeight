@@ -221,6 +221,7 @@ textarea { min-height: 260px; font-family: Consolas, monospace; }
   padding: 22px;
   margin-bottom: 24px;
   position: relative;
+  overflow: visible;
 }
 .sparkline-wrapper svg { display: block; width: 100%; height: auto; }
 .sparkline-wrapper .sparkline-empty {
@@ -228,6 +229,44 @@ textarea { min-height: 260px; font-family: Consolas, monospace; }
   padding: 48px 0;
   color: var(--muted);
   font-size: 14px;
+}
+
+.sparkline-svg {
+  width: 100%;
+  height: 170px;
+  display: block;
+  overflow: visible;
+  min-height: 170px;
+}
+
+.sparkline-point {
+  fill: var(--green);
+  stroke: rgba(7, 17, 14, 0.9);
+  stroke-width: 2;
+  cursor: pointer;
+  transition: r 0.15s ease;
+}
+.sparkline-point:hover,
+.sparkline-point.is-active {
+  filter: drop-shadow(0 0 8px rgba(140, 255, 181, 0.45));
+}
+
+.sparkline-tooltip {
+  position: absolute;
+  z-index: 20;
+  pointer-events: none;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(7, 17, 14, 0.92);
+  color: var(--text);
+  box-shadow: 0 16px 40px rgba(0,0,0,.35);
+  font-size: 12px;
+  transform: translate(-50%, -120%);
+  white-space: nowrap;
+}
+.sparkline-tooltip strong {
+  color: var(--green);
 }
 
 /* ── MappingPreviewTable ──────────────────────────────────────── */
@@ -277,6 +316,160 @@ textarea { min-height: 260px; font-family: Consolas, monospace; }
 .field-decision.absent { background: rgba(170,185,172,.08); color: var(--muted); }
 .field-decision.calculated { background: rgba(107,220,255,.12); color: var(--cyan); }
 .field-decision.conflict { background: rgba(255,122,122,.12); color: var(--red); }
+
+.badge-unknown {
+  background: rgba(170,185,172,.08);
+  color: var(--muted);
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.dedup-warnings {
+  background: rgba(255,194,102,.06);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+}
+.dedup-warnings summary {
+  cursor: pointer;
+  color: var(--amber);
+  font-weight: 600;
+}
+
+/* ── Secondary page spacing ───────────────────────────────────── */
+
+.secondary-page h1 {
+  font-size: clamp(42px, 6vw, 68px);
+  line-height: 0.92;
+  margin-bottom: 22px;
+}
+
+/* ── SyncActionPanel — two-block layout ───────────────────────── */
+
+.sync-actions-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 16px;
+}
+@media (max-width: 860px) {
+  .sync-actions-grid { grid-template-columns: 1fr; }
+}
+
+.sync-action-block {
+  border: 1px solid var(--line);
+  background: rgba(246, 241, 224, 0.045);
+  border-radius: 20px;
+  padding: 16px;
+}
+
+.period-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 12px;
+}
+
+.period-pill {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.period-pill.is-active {
+  background: rgba(140, 255, 181, 0.16);
+  color: var(--green);
+  border-color: rgba(140, 255, 181, 0.45);
+}
+
+.sync-period-summary {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 6px;
+}
+
+/* ── Progress bar (indeterminate) ──────────────────────────────── */
+
+.progress-wrap {
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  height: 10px;
+  overflow: hidden;
+  background: rgba(0,0,0,.22);
+  position: relative;
+  padding-bottom: 18px;
+}
+
+.progress-bar {
+  height: 100%;
+  width: 38%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--green), var(--cyan));
+  animation: progress-indeterminate 1.1s ease-in-out infinite;
+  box-shadow: 0 0 18px rgba(140,255,181,.35);
+}
+
+@keyframes progress-indeterminate {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(280%); }
+}
+
+.sync-loading-text {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 10px;
+  text-align: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress-bar {
+    animation: none;
+    transform: none;
+    width: 100%;
+  }
+}
+
+/* ── Status badges for history page ────────────────────────────── */
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.status-badge.is-new,
+.status-badge.is-synced {
+  color: var(--green);
+  border-color: rgba(140,255,181,.32);
+  background: rgba(140,255,181,.08);
+}
+.status-badge.is-warning,
+.status-badge.is-duplicate {
+  color: var(--amber);
+  border-color: rgba(255,209,102,.32);
+  background: rgba(255,209,102,.08);
+}
+.status-badge.is-error,
+.status-badge.is-conflict,
+.status-badge.is-failed {
+  color: var(--red);
+  border-color: rgba(255,122,122,.32);
+  background: rgba(255,122,122,.08);
+}
 
 /* ── SyncActionPanel ──────────────────────────────────────────── */
 

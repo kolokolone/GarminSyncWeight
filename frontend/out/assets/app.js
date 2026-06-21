@@ -273,8 +273,8 @@ function renderLatestMeasurement(preview) {
     ["Masse musculaire", lm.muscle_mass_kg, "kg"],
     ["Masse osseuse", lm.bone_mass_kg, "kg"],
     ["IMC", lm.bmi],
-    ["Métabolisme basal", lm.basal_metabolic_rate_kcal, "kcal"],
-    ["Âge métabolique", lm.metabolic_age, "ans"],
+    ["Métabo. basal", lm.basal_metabolic_rate_kcal, "kcal"],
+    ["Âge métabo.", lm.metabolic_age, "ans"],
     ["Graisse viscérale", lm.visceral_fat_rating],
   ];
   for (const [label, val, unit] of tiles) {
@@ -297,6 +297,14 @@ function renderSparkline(items) {
   head.append(eye);
   wrapper.append(head);
 
+  // Subtitle context
+  const sub = document.createElement("p");
+  sub.style.color = "var(--muted)";
+  sub.style.fontSize = "12px";
+  sub.style.marginTop = "4px";
+  sub.textContent = items.length >= 30 ? "30 derniers jours" : `${items.length} dernières mesures`;
+  wrapper.append(sub);
+
   if (!items || items.length < 2) {
     const empty = document.createElement("div");
     empty.className = "sparkline-empty";
@@ -305,8 +313,9 @@ function renderSparkline(items) {
     return wrapper;
   }
 
-  const W = 600, H = 180, PAD = 20;
+  const W = 600, H = 180, PAD = 20, LABEL_W = 60;
   const values = items.map((i) => i.weight_kg).filter((v) => v != null);
+  const dates = items.filter((i) => i.weight_kg != null).map((i) => i.measured_at);
   if (values.length < 2) {
     const empty = document.createElement("div");
     empty.className = "sparkline-empty";
@@ -319,24 +328,44 @@ function renderSparkline(items) {
   const max = Math.max(...values) + 1;
   const range = max - min || 1;
 
-  function x(i) { return PAD + (i / (values.length - 1)) * (W - 2 * PAD); }
+  function x(i) { return PAD + (i / (values.length - 1)) * (W - PAD - LABEL_W); }
   function y(v) { return H - PAD - ((v - min) / range) * (H - 2 * PAD); }
 
   const pts = values.map((v, i) => `${x(i)},${y(v)}`).join(" ");
+  const firstVal = values[0];
   const lastVal = values[values.length - 1];
   const lastX = x(values.length - 1);
   const lastY = y(lastVal);
 
+  // ── Create SVG ──────────────────────────────────────────────
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-  svg.setAttribute("preserveAspectRatio", "none");
-  svg.style.height = "160px";
+  svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+  svg.className = "sparkline-svg";
 
-  // Area fill
+  // Gradient definition
+  const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+  const grad = document.createElementNS("http://www.w3.org/2000/svg", "linearGradient");
+  grad.id = "weightGradient";
+  grad.setAttribute("x1", "0"); grad.setAttribute("y1", "0");
+  grad.setAttribute("x2", "0"); grad.setAttribute("y2", "1");
+  const stop1 = document.createElementNS("http://www.w3.org/2000/svg", "stop");
+  stop1.setAttribute("offset", "0%");
+  stop1.setAttribute("stop-color", "var(--green)");
+  stop1.setAttribute("stop-opacity", "0.35");
+  const stop2 = document.createElementNS("http://www.w3.org/2000/svg", "stop");
+  stop2.setAttribute("offset", "100%");
+  stop2.setAttribute("stop-color", "var(--green)");
+  stop2.setAttribute("stop-opacity", "0.02");
+  grad.append(stop1, stop2);
+  defs.append(grad);
+  svg.append(defs);
+
+  // Area fill (with gradient)
   const area = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
-  const areaPts = `${PAD},${H - PAD} ${pts} ${lastX},${H - PAD}`;
+  const areaPts = `${x(0)},${y(firstVal)} ${pts} ${lastX},${H - PAD} ${x(0)},${H - PAD}`;
   area.setAttribute("points", areaPts);
-  area.setAttribute("fill", "rgba(140,255,181,.08)");
+  area.setAttribute("fill", "url(#weightGradient)");
   svg.append(area);
 
   // Line
@@ -349,26 +378,97 @@ function renderSparkline(items) {
   poly.setAttribute("stroke-linecap", "round");
   svg.append(poly);
 
-  // Dot on last
-  const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-  dot.setAttribute("cx", String(lastX));
-  dot.setAttribute("cy", String(lastY));
-  dot.setAttribute("r", "4");
-  dot.setAttribute("fill", "var(--green)");
-  svg.append(dot);
+  // Points on every data value + hover
+  for (let i = 0; i < values.length; i++) {
+    const cx = x(i), cy = y(values[i]);
+    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    circle.setAttribute("cx", String(cx));
+    circle.setAttribute("cy", String(cy));
+    circle.setAttribute("r", "3.5");
+    circle.setAttribute("fill", "var(--green)");
+    circle.setAttribute("stroke", "rgba(7,17,14,0.9)");
+    circle.setAttribute("stroke-width", "2");
+    circle.setAttribute("class", "sparkline-point");
+    circle.setAttribute("data-idx", String(i));
 
-  // Last value label
+    // Hover tooltip via mouseenter/leave on wrapper
+    circle.addEventListener("mouseenter", (e) => {
+      const dt = dates[i] ? new Date(dates[i]).toLocaleString("fr-FR", {
+        day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
+      }) : "";
+      showSparklineTooltip(wrapper, e, dt, values[i]);
+    });
+    circle.addEventListener("mouseleave", () => hideSparklineTooltip(wrapper));
+    // Also mark this as last-point special
+    if (i === values.length - 1) {
+      circle.setAttribute("r", "5");
+      circle.setAttribute("class", "sparkline-point is-active");
+    }
+    svg.append(circle);
+  }
+
+  // Last value label — placed to the right with enough room
   const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
-  label.setAttribute("x", String(lastX + 8));
-  label.setAttribute("y", String(lastY - 8));
+  label.setAttribute("x", String(W - 4));
+  label.setAttribute("y", String(lastY));
   label.setAttribute("fill", "var(--green)");
-  label.setAttribute("font-size", "13");
-  label.setAttribute("font-weight", "700");
+  label.setAttribute("font-size", "14");
+  label.setAttribute("font-weight", "800");
+  label.setAttribute("text-anchor", "end");
+  label.setAttribute("dominant-baseline", "middle");
   label.textContent = `${lastVal.toFixed(1)} kg`;
   svg.append(label);
 
+  // Min value label (discreet)
+  const minVal = Math.min(...values);
+  const maxVal = Math.max(...values);
+  if (minVal !== lastVal) {
+    const minLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    minLabel.setAttribute("x", String(PAD));
+    minLabel.setAttribute("y", String(y(minVal) - 8));
+    minLabel.setAttribute("fill", "var(--muted)");
+    minLabel.setAttribute("font-size", "10");
+    minLabel.setAttribute("font-weight", "600");
+    minLabel.setAttribute("dominant-baseline", "middle");
+    minLabel.textContent = `${minVal.toFixed(1)} min`;
+    svg.append(minLabel);
+  }
+  if (maxVal !== lastVal && maxVal !== minVal) {
+    const maxLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    maxLabel.setAttribute("x", String(PAD));
+    maxLabel.setAttribute("y", String(y(maxVal) + 14));
+    maxLabel.setAttribute("fill", "var(--muted)");
+    maxLabel.setAttribute("font-size", "10");
+    maxLabel.setAttribute("font-weight", "600");
+    maxLabel.setAttribute("dominant-baseline", "middle");
+    maxLabel.textContent = `${maxVal.toFixed(1)} max`;
+    svg.append(maxLabel);
+  }
+
   wrapper.append(svg);
   return wrapper;
+}
+
+/* ── Sparkline tooltip helpers ───────────────────────────────── */
+
+function showSparklineTooltip(wrapper, event, dateStr, weight) {
+  let tip = wrapper.querySelector(".sparkline-tooltip");
+  if (!tip) {
+    tip = document.createElement("div");
+    tip.className = "sparkline-tooltip";
+    wrapper.appendChild(tip);
+  }
+  const rect = wrapper.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+  tip.innerHTML = `<strong>${weight.toFixed(1)} kg</strong> · ${dateStr}`;
+  tip.style.left = x + "px";
+  tip.style.top = Math.max(y - 50, 8) + "px";
+}
+
+function hideSparklineTooltip(wrapper) {
+  const tip = wrapper.querySelector(".sparkline-tooltip");
+  if (tip) tip.remove();
 }
 
 /* ── MappingPreviewTable ─────────────────────────────────────── */
@@ -429,17 +529,22 @@ function renderMappingTable(preview) {
   wrapper.append(table);
 
   if (preview?.warnings?.length) {
-    const warnDiv = document.createElement("div");
-    warnDiv.style.marginTop = "12px";
+    const details = document.createElement("details");
+    details.className = "dedup-warnings";
+    details.style.marginTop = "12px";
+    const summary = document.createElement("summary");
+    const count = preview.warnings.length;
+    summary.textContent = `⚠ ${count} avertissement${count > 1 ? "s" : ""}`;
+    details.append(summary);
     for (const w of preview.warnings) {
       const p = document.createElement("p");
       p.style.color = "var(--amber)";
       p.style.fontSize = "12px";
-      p.style.margin = "4px 0";
-      p.textContent = `⚠ ${w}`;
-      warnDiv.append(p);
+      p.style.margin = "4px 0 4px 16px";
+      p.textContent = w;
+      details.append(p);
     }
-    wrapper.append(warnDiv);
+    wrapper.append(details);
   }
 
   return wrapper;
@@ -474,42 +579,107 @@ function renderSyncActions(preview) {
     return panel;
   }
 
-  const msg = document.createElement("p");
-  msg.className = "sync-message";
-  msg.textContent = decision?.message || "Les données affichées seront envoyées à Garmin Connect.";
-  panel.append(msg);
+  // ── Two-column grid ──────────────────────────────────────────
+  const grid = document.createElement("div");
+  grid.className = "sync-actions-grid";
 
-  const actions = document.createElement("div");
-  actions.className = "actions";
+  // ── Block A: Dernière mesure ─────────────────────────────────
+  const blockA = document.createElement("div");
+  blockA.className = "sync-action-block";
+
+  const aTitle = document.createElement("div");
+  aTitle.style.fontSize = "15px";
+  aTitle.style.fontWeight = "700";
+  aTitle.style.marginBottom = "6px";
+  aTitle.textContent = "Dernière mesure";
+  blockA.append(aTitle);
+
+  const aDesc = document.createElement("p");
+  aDesc.style.color = "var(--muted)";
+  aDesc.style.fontSize = "13px";
+  aDesc.style.margin = "0 0 12px";
+  aDesc.textContent = decision?.message || "Synchronise uniquement la mesure affichée en haut du dashboard.";
+  blockA.append(aDesc);
 
   const syncBtn = document.createElement("button");
   syncBtn.textContent = "Synchroniser cette mesure";
   syncBtn.disabled = !decision?.can_sync;
   if (!decision?.can_sync) syncBtn.title = "Aucune nouvelle mesure à synchroniser.";
-  syncBtn.addEventListener("click", async () => {
-    syncBtn.disabled = true;
-    syncBtn.textContent = "Synchronisation en cours…";
-    state.syncResult = null;
-    render(); // will clear old result
+  syncBtn.addEventListener("click", () => runSync("latest"));
+  blockA.append(syncBtn);
 
-    try {
-      const today = getLocalDate();
-      const result = await api("/api/sync/run", {
-        method: "POST",
-        body: JSON.stringify({ start_date: today, end_date: today, timezone: "Europe/Paris" }),
-      });
-      state.syncResult = result;
-      await safeRefresh();
-      // Re-fetch preview
-      try { state.preview = await api("/api/measurements/latest?days=30"); } catch {}
-    } catch (err) {
-      state.syncResult = { error: err.message };
-    }
-    render();
-  });
-  actions.append(syncBtn);
+  grid.append(blockA);
 
-  // Secondary buttons
+  // ── Block B: Période ─────────────────────────────────────────
+  const blockB = document.createElement("div");
+  blockB.className = "sync-action-block";
+
+  const bTitle = document.createElement("div");
+  bTitle.style.fontSize = "15px";
+  bTitle.style.fontWeight = "700";
+  bTitle.style.marginBottom = "6px";
+  bTitle.textContent = "Période";
+  blockB.append(bTitle);
+
+  const bDesc = document.createElement("p");
+  bDesc.style.color = "var(--muted)";
+  bDesc.style.fontSize = "13px";
+  bDesc.style.margin = "0 0 10px";
+  bDesc.textContent = "Choisis une période, puis lance la synchronisation.";
+  blockB.append(bDesc);
+
+  // Period picker (pills, selection only — no auto sync)
+  const picker = document.createElement("div");
+  picker.className = "period-picker";
+
+  if (!state._periodDays) state._periodDays = 1;
+  const periodOpts = [
+    ["Aujourd'hui", 1],
+    ["7 jours", 7],
+    ["30 jours", 30],
+  ];
+  for (const [label, days] of periodOpts) {
+    const pill = document.createElement("button");
+    pill.className = "period-pill";
+    if (state._periodDays === days) pill.classList.add("is-active");
+    pill.textContent = label;
+    pill.addEventListener("click", () => {
+      state._periodDays = days;
+      // Re-render just the sync panel area
+      const parent = panel.parentElement;
+      if (parent) {
+        const idx = Array.from(parent.children).indexOf(panel);
+        // Find our position and re-render
+        render();
+      } else {
+        render();
+      }
+    });
+    picker.append(pill);
+  }
+  blockB.append(picker);
+
+  // Period date summary
+  const periodSummary = document.createElement("div");
+  periodSummary.className = "sync-period-summary";
+  const pEnd = getLocalDate();
+  const pStart = new Date(Date.now() - (state._periodDays - 1) * 86400000);
+  const pStartStr = pStart.toISOString().slice(0, 10);
+  const fmt = (s) => { const d = new Date(s + "T00:00:00"); return d.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" }); };
+  periodSummary.textContent = `Période sélectionnée : ${fmt(pStartStr)} → ${fmt(pEnd)}`;
+  blockB.append(periodSummary);
+
+  const periodSyncBtn = document.createElement("button");
+  periodSyncBtn.className = "secondary";
+  periodSyncBtn.textContent = "Synchroniser la période";
+  periodSyncBtn.style.marginTop = "12px";
+  periodSyncBtn.addEventListener("click", () => runSync("period"));
+  blockB.append(periodSyncBtn);
+
+  grid.append(blockB);
+  panel.append(grid);
+
+  // Refresh button
   const refreshBtn = btn("Rafraîchir les mesures", async () => {
     try {
       state.preview = null;
@@ -519,57 +689,71 @@ function renderSyncActions(preview) {
     } catch {}
     render();
   }, "secondary");
-  actions.append(refreshBtn);
-
-  panel.append(actions);
-
-  // Period selection
-  const periodBar = document.createElement("div");
-  periodBar.style.marginTop = "12px";
-  periodBar.style.display = "flex";
-  periodBar.style.flexWrap = "wrap";
-  periodBar.style.gap = "8px";
-  periodBar.style.alignItems = "center";
-
-  const periodLabel = document.createElement("span");
-  periodLabel.style.color = "var(--muted)";
-  periodLabel.style.fontSize = "12px";
-  periodLabel.textContent = "Choisir une période :";
-  periodBar.append(periodLabel);
-
-  const quickBtns = [
-    ["Aujourd'hui", 1],
-    ["7 jours", 7],
-    ["30 jours", 30],
-  ];
-  for (const [label, days] of quickBtns) {
-    const b = btn(label, async () => {
-      const end = getLocalDate();
-      const start = new Date(Date.now() - (days - 1) * 86400000);
-      const sy = start.getFullYear();
-      const sm = String(start.getMonth() + 1).padStart(2, "0");
-      const sd = String(start.getDate()).padStart(2, "0");
-      const startStr = `${sy}-${sm}-${sd}`;
-
-      try {
-        const result = await api("/api/sync/run", {
-          method: "POST",
-          body: JSON.stringify({ start_date: startStr, end_date: end, timezone: "Europe/Paris" }),
-        });
-        state.syncResult = result;
-        await safeRefresh();
-        try { state.preview = await api("/api/measurements/latest?days=30"); } catch {}
-      } catch (err) {
-        state.syncResult = { error: err.message };
-      }
-      render();
-    }, "secondary");
-    periodBar.append(b);
-  }
-
-  panel.append(periodBar);
+  refreshBtn.style.marginTop = "14px";
+  panel.append(refreshBtn);
 
   return panel;
+}
+
+/* ── Sync execution with progress bar ───────────────────────── */
+
+let _syncRunning = false;
+
+async function runSync(mode) {
+  if (_syncRunning) return;
+  _syncRunning = true;
+  state.syncResult = null;
+  state._showProgress = true;
+  render();
+
+  try {
+    let startDate, endDate;
+    if (mode === "latest") {
+      const previewDate = state.preview?.latest_measurement?.measured_at;
+      startDate = previewDate ? previewDate.slice(0, 10) : getLocalDate();
+      endDate = startDate;
+    } else {
+      endDate = getLocalDate();
+      const days = state._periodDays || 1;
+      const s = new Date(Date.now() - (days - 1) * 86400000);
+      startDate = s.toISOString().slice(0, 10);
+    }
+
+    const result = await api("/api/sync/run", {
+      method: "POST",
+      body: JSON.stringify({ start_date: startDate, end_date: endDate, timezone: "Europe/Paris" }),
+    });
+    state.syncResult = result;
+    await safeRefresh();
+    try { state.preview = await api("/api/measurements/latest?days=30"); } catch {}
+    try { state.recent = await api("/api/measurements/recent?days=30"); } catch {}
+  } catch (err) {
+    state.syncResult = { error: err.message };
+  }
+
+  state._showProgress = false;
+  _syncRunning = false;
+  render();
+}
+
+/* ── Sync progress bar ──────────────────────────────────────── */
+
+function renderProgressBar() {
+  if (!state._showProgress) return null;
+
+  const wrap = document.createElement("div");
+  wrap.className = "progress-wrap";
+
+  const bar = document.createElement("div");
+  bar.className = "progress-bar";
+  wrap.append(bar);
+
+  const text = document.createElement("div");
+  text.className = "sync-loading-text";
+  text.textContent = "Synchronisation en cours…";
+  wrap.append(text);
+
+  return wrap;
 }
 
 /* ── SyncResultCard ──────────────────────────────────────────── */
@@ -635,16 +819,35 @@ function renderSyncResult() {
 
       const date = c.measured_at_local || c.date || "";
       const weight = c.mapped_fields?.weight != null ? `${c.mapped_fields.weight} kg` : "";
-      const statusLabel = c.decision === "synced" ? "✅ synchronisé" :
-                          c.decision === "skipped_existing" ? "⏭ déjà présent" :
-                          c.decision === "skipped_conflict" ? "⚠ conflit" :
-                          c.decision === "failed" ? "❌ échec" :
-                          c.decision === "invalid" ? "⛔ invalide" : c.decision;
-      item.textContent = `${date} — ${weight} — ${statusLabel}`;
+      const decisionMeta = {
+        synced: { cls: "will_sync", txt: "Synchronisé" },
+        skipped_existing: { cls: "ignored", txt: "Déjà présent" },
+        skipped_conflict: { cls: "conflict", txt: "Conflit" },
+        failed: { cls: "conflict", txt: "Échec" },
+        invalid: { cls: "absent", txt: "Invalide" },
+      };
+      const meta = decisionMeta[c.decision] || { cls: "absent", txt: c.decision };
+      const badge = document.createElement("span");
+      badge.className = `field-decision ${meta.cls}`;
+      badge.textContent = meta.txt;
+      const line = document.createElement("div");
+      line.style.display = "flex";
+      line.style.alignItems = "center";
+      line.style.gap = "8px";
+      line.style.padding = "6px 0";
+      line.style.borderBottom = "1px solid var(--line)";
+      line.style.fontSize = "13px";
+      line.style.color = "var(--muted)";
+      const textSpan = document.createElement("span");
+      textSpan.textContent = `${date} — ${weight}`;
+      line.append(textSpan, badge);
+      item.append(line);
       if (c.reason) {
         const reason = document.createElement("div");
         reason.style.color = "var(--amber)";
         reason.style.fontSize = "11px";
+        reason.style.marginLeft = "8px";
+        reason.style.marginBottom = "6px";
         reason.textContent = c.reason;
         item.append(reason);
       }
@@ -707,6 +910,10 @@ function renderDashboard() {
     view.append(renderSyncActions(state.preview));
   }
 
+  // 5b. Progress bar during sync
+  const prog = renderProgressBar();
+  if (prog) view.append(prog);
+
   // 6. Sync result
   const syncRes = renderSyncResult();
   if (syncRes) view.append(syncRes);
@@ -721,14 +928,27 @@ async function loadDashboardData() {
   const g = state.garmin || {};
   if (!w.connected || !g.token_valid) return;
 
-  try {
-    state.preview = await api("/api/measurements/latest?days=30");
-  } catch { state.preview = null; }
+  // Session cache: skip refetch if fetched < 10s ago
+  const now = Date.now();
+  const CACHE_TTL = 10000;
+  if (state._dashboardFetchedAt && (now - state._dashboardFetchedAt) < CACHE_TTL) {
+    // stale enough to refetch in background?
+    // For now, just skip to avoid flash re-renders during fast nav
+    return;
+  }
 
-  try {
-    state.recent = await api("/api/measurements/recent?days=30");
-  } catch { state.recent = null; }
+  const [previewResult, recentResult] = await Promise.allSettled([
+    api("/api/measurements/latest?days=30"),
+    api("/api/measurements/recent?days=30"),
+  ]);
 
+  if (previewResult.status === "fulfilled") state.preview = previewResult.value;
+  else state.preview = null;
+
+  if (recentResult.status === "fulfilled") state.recent = recentResult.value;
+  else state.recent = null;
+
+  state._dashboardFetchedAt = Date.now();
   render();
 }
 
@@ -743,69 +963,185 @@ function renderHistorique() {
   h.textContent = "Historique des mesures";
   view.append(h);
 
-  const p = state.preview;
   const w = state.withings || {};
+
+  // Auto-load history data on first visit
+  if (state._historyItems === undefined && state._historyLoading !== true && w.connected) {
+    state._historyLoading = true;
+    loadHistory().then(() => { try { render(); } catch(e) {} }).catch(() => {});
+  }
 
   if (!w.connected) {
     view.append(emptyState("Withings non connecté", "Connecte Withings dans les Réglages pour voir l'historique.", link("Ouvrir les réglages", "/reglages")));
     return view;
   }
 
-  const recent = state.recent;
-  if (!recent || !recent.items || recent.items.length === 0) {
+  // ── Load history data if not cached ─────────────────────────
+  const items = state._historyItems;
+  const summary = state._historySummary;
+  const loading = state._historyLoading;
+
+  // Summary bar
+  if (summary && summary.count > 0) {
+    const sumBar = document.createElement("div");
+    sumBar.style.display = "flex";
+    sumBar.style.flexWrap = "wrap";
+    sumBar.style.gap = "12px";
+    sumBar.style.marginBottom = "14px";
+    sumBar.style.fontSize = "12px";
+    sumBar.style.color = "var(--muted)";
+    const parts = [];
+    if (summary.new_count > 0) parts.push(`<span style="color:var(--green)">${summary.new_count} nouveau${summary.new_count > 1 ? "x" : ""}</span>`);
+    if (summary.already_synced_count > 0) parts.push(`<span>${summary.already_synced_count} synchronisé${summary.already_synced_count > 1 ? "s" : ""}</span>`);
+    if (summary.conflict_count > 0) parts.push(`<span style="color:var(--amber)">${summary.conflict_count} conflit${summary.conflict_count > 1 ? "s" : ""}</span>`);
+    if (summary.failed_count > 0) parts.push(`<span style="color:var(--red)">${summary.failed_count} échec${summary.failed_count > 1 ? "s" : ""}</span>`);
+    sumBar.innerHTML = parts.join(" · ");
+    view.append(sumBar);
+  }
+
+  if (loading) {
+    view.append(loadingState("Vérification des statuts Garmin…"));
+  } else if (!items || items.length === 0) {
     view.append(emptyState("Aucune mesure", "Aucune mesure Withings trouvée pour la période récente."));
     if (state.preview?.latest_measurement) {
-      // We have at least one measurement via preview
+      // We have at least one measurement via preview — show refresh
     } else {
-      view.append(btn("Rafraîchir", async () => {
-        try { state.recent = await api("/api/measurements/recent?days=30"); } catch {}
+      const firstLoadBtn = btn("Charger l'historique", async () => {
+        state._historyLoading = true;
         render();
-      }, "secondary"));
+        await loadHistory();
+        render();
+      }, "secondary");
+      view.append(firstLoadBtn);
     }
-    return view;
+  } else {
+    // ── Table ──────────────────────────────────────────────────
+    const wrapper = document.createElement("div");
+    wrapper.className = "history-table-wrapper";
+
+    const table = document.createElement("table");
+    table.className = "history-table";
+    table.innerHTML = `<thead><tr>
+      <th>Date</th>
+      <th>Poids</th>
+      <th>Masse grasse</th>
+      <th>Statut Garmin</th>
+      <th>Décision</th>
+      <th>Action</th>
+    </tr></thead><tbody></tbody>`;
+    const tbody = table.querySelector("tbody");
+
+    // Status → UI badge mapping
+    const garminStatusMap = {
+      new: { cls: "status-badge is-new", txt: "Nouveau" },
+      already_synced_by_garminsync: { cls: "status-badge is-synced", txt: "Synchronisé" },
+      already_present: { cls: "status-badge is-duplicate", txt: "Déjà présent" },
+      possible_duplicate: { cls: "status-badge is-duplicate", txt: "Doublon ?" },
+      conflict_same_day: { cls: "status-badge is-conflict", txt: "Conflit" },
+      failed: { cls: "status-badge is-failed", txt: "Échec" },
+      unchecked: { cls: "status-badge", txt: "Non vérifié" },
+    };
+    const decisionMap = {
+      ready_to_sync: { cls: "status-badge is-new", txt: "Prêt" },
+      already_synced: { cls: "status-badge is-synced", txt: "Déjà synchronisé" },
+      conflict: { cls: "status-badge is-warning", txt: "À vérifier" },
+      failed: { cls: "status-badge is-failed", txt: "Échec" },
+      unchecked: { cls: "status-badge", txt: "—" },
+    };
+
+    for (const item of items) {
+      const row = document.createElement("tr");
+      const dt = item.measured_at_local ? new Date(item.measured_at_local).toLocaleString("fr-FR", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+      const key = item.date || "";
+
+      const gs = garminStatusMap[item.garmin_status] || garminStatusMap.unchecked;
+      const ds = decisionMap[item.decision] || decisionMap.unchecked;
+
+      row.innerHTML = `
+        <td>${dt}</td>
+        <td>${item.weight_kg != null ? item.weight_kg.toFixed(1) + " kg" : "—"}</td>
+        <td>${item.fat_percent != null ? item.fat_percent.toFixed(1) + " %" : "—"}</td>
+        <td><span class="${gs.cls}">${gs.txt}</span></td>
+        <td><span class="${ds.cls}">${ds.txt}</span></td>
+        <td><button class="btn-secondary" style="font-size:11px;padding:2px 8px">Sync</button></td>
+      `;
+      const syncBtn = row.querySelector("button");
+      if (key) {
+        syncBtn.addEventListener("click", async () => {
+          if (_syncRunning) return;
+          state.syncResult = null;
+          state._showProgress = true;
+          render();
+          try {
+            const result = await api("/api/sync/run", {
+              method: "POST",
+              body: JSON.stringify({ start_date: key, end_date: key, timezone: "Europe/Paris" }),
+            });
+            state.syncResult = result;
+            await safeRefresh();
+            try { state.preview = await api("/api/measurements/latest?days=30"); } catch {}
+            // Refresh history
+            await loadHistory();
+          } catch (err) {
+            state.syncResult = { error: err.message };
+          }
+          state._showProgress = false;
+          render();
+        });
+      } else {
+        syncBtn.disabled = true;
+        syncBtn.title = "Date inconnue";
+      }
+      tbody.append(row);
+    }
+
+    wrapper.append(table);
+    view.append(wrapper);
   }
 
-  const wrapper = document.createElement("div");
-  wrapper.className = "history-table-wrapper";
+  // ── Actions ──────────────────────────────────────────────────
+  const actionRow = document.createElement("div");
+  actionRow.className = "actions";
 
-  const table = document.createElement("table");
-  table.className = "history-table";
-  table.innerHTML = `<thead><tr>
-    <th>Date</th>
-    <th>Poids</th>
-    <th>Masse grasse</th>
-    <th>Statut Garmin</th>
-    <th>Décision</th>
-  </tr></thead><tbody></tbody>`;
-  const tbody = table.querySelector("tbody");
-
-  // Get dedup info from preview if available
-  const dedupStatus = state.preview?.deduplication?.status || "unknown";
-
-  for (const item of (recent.items || []).reverse()) {
-    const row = document.createElement("tr");
-    const dt = item.measured_at ? new Date(item.measured_at).toLocaleString("fr-FR", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
-    row.innerHTML = `
-      <td>${dt}</td>
-      <td>${item.weight_kg != null ? item.weight_kg.toFixed(1) + " kg" : "—"}</td>
-      <td>${item.fat_percent != null ? item.fat_percent.toFixed(1) + " %" : "—"}</td>
-      <td><span class="badge">non vérifié</span></td>
-      <td><span class="field-decision">—</span></td>
-    `;
-    tbody.append(row);
-  }
-
-  wrapper.append(table);
-  view.append(wrapper);
-
-  const refreshBtn = btn("Rafraîchir les mesures", async () => {
-    try { state.recent = await api("/api/measurements/recent?days=30"); } catch {}
+  const refreshBtn = btn("Vérifier les statuts Garmin", async () => {
+    state._historyLoading = true;
+    render();
+    await loadHistory();
     render();
   }, "secondary");
-  refreshBtn.style.marginTop = "12px";
-  view.append(refreshBtn);
+  actionRow.append(refreshBtn);
+
+  const loadBtn = btn("Rafraîchir les mesures", async () => {
+    try { state.recent = await api("/api/measurements/recent?days=30"); } catch {}
+    state._historyItems = null;
+    state._historySummary = null;
+    render();
+  }, "secondary");
+  actionRow.append(loadBtn);
+
+  view.append(actionRow);
 
   return view;
+}
+
+/* ── History data loader ─────────────────────────────────────── */
+
+async function loadHistory() {
+  try {
+    state._historyLoading = true;
+    const res = await api("/api/measurements/history?days=30&include_garmin_status=true");
+    state._historyItems = res.items || [];
+    state._historySummary = res.summary || null;
+    state._historyLoading = false;
+    state._historyFetchedAt = Date.now();
+    return res;
+  } catch (err) {
+    state._historyItems = [];
+    state._historySummary = null;
+    state._historyLoading = false;
+    console.error("History load failed:", err);
+    return null;
+  }
 }
 
 /* ── Réglages ────────────────────────────────────────────────── */
@@ -1073,6 +1409,8 @@ function renderLogs() {
       try {
         const result = await api(`/api/logs/${name}`);
         out.textContent = (result.lines || []).join("\n") || "Aucun log.";
+        // Auto-scroll to bottom
+        out.scrollTop = out.scrollHeight;
       } catch (err) { out.textContent = `Erreur : ${err.message}`; }
     }, "secondary");
     actions.append(b);
@@ -1082,6 +1420,10 @@ function renderLogs() {
   const logDiv = document.createElement("div");
   logDiv.className = "log-content tech-content";
   logDiv.style.marginTop = "12px";
+  logDiv.style.maxHeight = "60vh";
+  logDiv.style.overflowY = "auto";
+  logDiv.style.fontSize = "12px";
+  logDiv.style.lineHeight = "1.5";
   logDiv.textContent = "Clique sur un service pour afficher les logs.";
   wrapper.append(logDiv);
 
@@ -1105,15 +1447,27 @@ function render() {
   }
 
   switch (state.route) {
-    case "historique":
-      view.append(renderHistorique());
+    case "historique": {
+      const wrap = document.createElement("div");
+      wrap.className = "secondary-page";
+      wrap.append(renderHistorique());
+      view.append(wrap);
       break;
-    case "reglages":
-      view.append(renderReglages());
+    }
+    case "reglages": {
+      const wrap = document.createElement("div");
+      wrap.className = "secondary-page";
+      wrap.append(renderReglages());
+      view.append(wrap);
       break;
-    case "logs":
-      view.append(renderLogs());
+    }
+    case "logs": {
+      const wrap = document.createElement("div");
+      wrap.className = "secondary-page";
+      wrap.append(renderLogs());
+      view.append(wrap);
       break;
+    }
     default:
       view.append(renderDashboard());
       break;
