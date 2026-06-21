@@ -1061,7 +1061,6 @@ function renderDashboard() {
   const needsLoad = state._dashboardFetchedAt == null
     || (Date.now() - state._dashboardFetchedAt) > 10000;
   if (needsLoad && !state._dashboardLoading && !state.preview) {
-    state._dashboardLoading = true;
     loadDashboardData();
   }
 
