@@ -1,7 +1,7 @@
 """GarminSyncWeight command-line interface.
 
 Usage:
-    python -m backend.app.cli dry-run --start-date 2026-06-01 --end-date 2026-06-19
+    python -m backend.app.cli sync --start-date 2026-06-01 --end-date 2026-06-19
     python -m backend.app.cli status
     python -m backend.app.cli check-config
 """
@@ -41,8 +41,8 @@ def main() -> None:
         _cmd_status(settings)
     elif args.command == "check-config":
         _cmd_check_config(settings)
-    elif args.command == "dry-run":
-        asyncio.run(_cmd_dry_run(settings, args))
+    elif args.command == "sync":
+        asyncio.run(_cmd_sync(settings, args))
     else:
         parser.print_help()
         sys.exit(1)
@@ -61,8 +61,6 @@ def _cmd_status(settings: "Settings") -> None:
     print("║        GarminSyncWeight Status           ║")
     print("╚══════════════════════════════════════════╝")
     print(f"  Version:          {settings.app_version}")
-    print(f"  Dry-run default:  {settings.dry_run_default}")
-    print(f"  Writes enabled:   {settings.enable_garmin_writes}")
     print(f"  Withings config:  {'✓' if auth.is_configured() else '✗'}")
     print(f"  Withings token:   {'✓' if auth.has_token() else '✗'}")
     print(f"  Last sync:        {sync_store.last_sync_time() or 'never'}")
@@ -77,9 +75,9 @@ def _cmd_check_config(settings: "Settings") -> None:
     print(f"  APP_PORT:            {settings.app_port}")
     print(f"  APP_TIMEZONE:        {settings.app_timezone}")
     print(f"  USER_HEIGHT_M:       {settings.user_height_m or 'not set'}")
-    print(f"  DRY_RUN_DEFAULT:     {settings.dry_run_default}")
-    print(f"  ENABLE_GARMIN_WRITES: {settings.enable_garmin_writes}")
     print(f"  WITHINGS_SCOPE:      {settings.withings_scope}")
+    print(f"  GARMIN_MCP_SOURCE:   {settings.garmin_mcp_source}")
+    print(f"  GARMIN_TOKEN_DIR:    {settings.garmin_token_path}")
     print(f"  DATA_DIR:            {settings.resolved_data_dir}")
     print(f"  LOG_DIR:             {settings.resolved_log_dir}")
     print(f"  RUNTIME_DIR:         {settings.resolved_runtime_dir}")
@@ -92,14 +90,14 @@ def _cmd_check_config(settings: "Settings") -> None:
     print(f"    PER_DAY_STRATEGY:            {settings.withings_per_day_strategy}")
 
 
-async def _cmd_dry_run(settings: "Settings", args: argparse.Namespace) -> None:
+async def _cmd_sync(settings: "Settings", args: argparse.Namespace) -> None:
     token_store = TokenStore(settings.resolved_data_dir)
     sync_store = SyncStore(settings.resolved_data_dir)
     auth = WithingsAuthService(settings, token_store)
     wclient = WithingsClient(auth, settings)
     parser = WithingsParser(settings)
     mapper = WithingsToGarminMapper(settings)
-    garmin = GarminClient(settings, use_mcp=False)
+    garmin = GarminClient(settings)
     dedup = Deduplicator(settings, sync_store)
     report_builder = ReportBuilder(settings)
 
@@ -110,23 +108,22 @@ async def _cmd_dry_run(settings: "Settings", args: argparse.Namespace) -> None:
     start_date = args.start_date
     end_date = args.end_date
 
-    print("Mode: DRY-RUN")
+    print("Mode: synchronisation contrôlée")
     print(f"Période: {start_date} → {end_date}")
     print()
 
-    report = await engine.run_dry_run(start_date, end_date, settings.app_timezone)
+    report = await engine.run_sync(start_date, end_date, settings.app_timezone)
 
     s = report.summary
     print(f"Withings: {report.withings.get('raw_groups_count', 0)} groupes de mesures récupérés, "
           f"{report.withings.get('parsed_measurements_count', 0)} mesures exploitables")
-    print(f"Garmin: {len(report.garmin.get('daily_weigh_ins', []))} weigh-ins existants, "
-          f"{len(report.garmin.get('body_composition', []))} compositions existantes")
-    print(f"Nouveaux candidats: {s.would_write_count}")
-    print(f"Doublons: {s.skipped_duplicates_count}")
-    print(f"Doublons probables: {s.possible_duplicates_count}")
+    print(f"Garmin: {report.garmin.get('existing_weigh_ins_count', 0)} weigh-ins existants, "
+          f"{report.garmin.get('existing_body_composition_count', 0)} compositions existantes")
+    print(f"Synchronisées: {s.synced_count}")
+    print(f"Déjà présentes: {s.skipped_existing_count}")
     print(f"Conflits: {s.conflicts_count}")
     print(f"Invalides: {s.invalid_count}")
-    print("Écritures Garmin exécutées: 0")
+    print(f"Échecs: {s.failed_count}")
     print()
 
     report_path = report_builder.latest_report_path()
@@ -141,10 +138,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="garminsyncweight", description="GarminSyncWeight CLI")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    # dry-run
-    dry = sub.add_parser("dry-run", help="Run the sync pipeline in dry-run mode (no writes)")
-    dry.add_argument("--start-date", required=True, help="Start date YYYY-MM-DD")
-    dry.add_argument("--end-date", required=True, help="End date YYYY-MM-DD")
+    sync = sub.add_parser("sync", help="Run the guarded synchronization pipeline")
+    sync.add_argument("--start-date", required=True, help="Start date YYYY-MM-DD")
+    sync.add_argument("--end-date", required=True, help="End date YYYY-MM-DD")
 
     # status
     sub.add_parser("status", help="Show application status")

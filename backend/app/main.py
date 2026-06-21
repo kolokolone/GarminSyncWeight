@@ -1,6 +1,6 @@
 """GarminSyncWeight — FastAPI application entry point.
 
-Safe dry-run bridge between Withings Body Cardio and Garmin Connect.
+Controlled local bridge between Withings Body Cardio and Garmin Connect.
 
 Usage:
     uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8010
@@ -32,7 +32,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="GarminSyncWeight",
         version=settings.app_version,
-        description="Withings → Garmin Connect bridge — safe dry-run pipeline",
+        description="Withings → Garmin Connect bridge — controlled idempotent sync",
     )
 
     app.add_middleware(
