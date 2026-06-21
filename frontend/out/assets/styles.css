@@ -639,24 +639,41 @@ textarea { min-height: 260px; font-family: Consolas, monospace; }
 }
 .compact-preview .cp-head { margin-bottom: 8px; }
 .compact-preview .cp-device { color: var(--muted); font-size: 13px; }
+
+.compact-preview .cp-body {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+}
+
 .compact-preview .cp-weight {
+  flex-shrink: 0;
   font-size: clamp(52px, 10vw, 72px);
   font-weight: 900;
   letter-spacing: -0.04em;
   color: var(--green);
   line-height: 1;
   margin: 8px 0 4px;
+  white-space: nowrap;
 }
 .compact-preview .cp-weight-unit {
   font-size: 24px;
   font-weight: 400;
   color: var(--muted);
 }
+
+.compact-preview .metric-grid {
+  flex: 1;
+  min-width: 0;
+  margin-top: 0;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
 .compact-preview .cp-tags {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-bottom: 16px;
+  margin-top: 16px;
 }
 .compact-preview .cp-tag {
   font-size: 10px;

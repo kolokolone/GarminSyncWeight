@@ -1159,32 +1159,19 @@ function renderCompactPreview(preview) {
   head.append(dev);
   card.append(head);
 
-  // Weight (big)
+  // Body row : weight (left) + metric tiles (right)
+  const body = document.createElement("div");
+  body.className = "cp-body";
+
+  // Weight (big, left side)
   if (lm.weight_kg != null) {
     const w = document.createElement("div");
     w.className = "cp-weight";
     w.innerHTML = `${lm.weight_kg.toFixed(1)} <span class="cp-weight-unit">kg</span>`;
-    card.append(w);
+    body.append(w);
   }
 
-  // Tags (dedup status, decision)
-  const tags = document.createElement("div");
-  tags.className = "cp-tags";
-  if (preview.deduplication) {
-    const tag = document.createElement("span");
-    tag.className = `cp-tag ${preview.decision?.can_sync ? 'ok' : (preview.deduplication.status === 'conflict' ? 'warn' : '')}`;
-    tag.textContent = preview.deduplication.message || preview.deduplication.status;
-    tags.append(tag);
-  }
-  if (preview.decision && !preview.decision.can_sync && preview.decision.status !== "blocked") {
-    const tag = document.createElement("span");
-    tag.className = "cp-tag warn";
-    tag.textContent = preview.decision.message || "Non synchronisable";
-    tags.append(tag);
-  }
-  card.append(tags);
-
-  // Metric tiles (BMI calculated locally)
+  // Metric tiles (right side)
   if (lm.weight_kg != null) {
     const grid = document.createElement("div");
     grid.className = "metric-grid";
@@ -1211,8 +1198,27 @@ function renderCompactPreview(preview) {
     for (const [label, val, unit] of tiles) {
       grid.append(metricTile(label, val, unit));
     }
-    card.append(grid);
+    body.append(grid);
   }
+
+  card.append(body);
+
+  // Tags (dedup status, decision)
+  const tags = document.createElement("div");
+  tags.className = "cp-tags";
+  if (preview.deduplication) {
+    const tag = document.createElement("span");
+    tag.className = `cp-tag ${preview.decision?.can_sync ? 'ok' : (preview.deduplication.status === 'conflict' ? 'warn' : '')}`;
+    tag.textContent = preview.deduplication.message || preview.deduplication.status;
+    tags.append(tag);
+  }
+  if (preview.decision && !preview.decision.can_sync && preview.decision.status !== "blocked") {
+    const tag = document.createElement("span");
+    tag.className = "cp-tag warn";
+    tag.textContent = preview.decision.message || "Non synchronisable";
+    tags.append(tag);
+  }
+  card.append(tags);
 
   return card;
 }
