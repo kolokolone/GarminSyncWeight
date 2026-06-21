@@ -1,9 +1,6 @@
-"""Persistence layer for sync events and dry-run reports.
+"""Persistence layer for sync attempts and results."""
 
-Stores every sync attempt (including dry-runs) in the SQLite
-``sync_events`` table for idempotency and audit.
-"""
-
+import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,12 +24,46 @@ class SyncStore:
         return self._conn
 
     def event_exists(self, idempotency_key: str) -> bool:
-        """Check whether an event with this key already exists."""
+        """Check whether this key was really handled by a prior sync."""
         row = self.conn.execute(
-            "SELECT 1 FROM sync_events WHERE idempotency_key = ? LIMIT 1",
+            """SELECT 1 FROM sync_events
+               WHERE idempotency_key = ?
+                 AND status IN ('synced', 'skipped_existing')
+               LIMIT 1""",
             (idempotency_key,),
         ).fetchone()
         return row is not None
+
+    def start_attempt(self, start_date: str, end_date: str) -> int:
+        now = datetime.now(UTC).isoformat()
+        cur = self.conn.execute(
+            """INSERT INTO sync_attempts (started_at, start_date, end_date, status)
+               VALUES (?, ?, ?, ?)""",
+            (now, start_date, end_date, "running"),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def finish_attempt(
+        self,
+        attempt_id: int,
+        status: str,
+        summary: dict[str, Any] | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        self.conn.execute(
+            """UPDATE sync_attempts
+               SET completed_at = ?, status = ?, summary_json = ?, error_message = ?
+               WHERE id = ?""",
+            (
+                datetime.now(UTC).isoformat(),
+                status,
+                json.dumps(summary, ensure_ascii=False) if summary else None,
+                error_message,
+                attempt_id,
+            ),
+        )
+        self.conn.commit()
 
     def save_event(
         self,
@@ -43,20 +74,30 @@ class SyncStore:
         garmin_date: str,
         weight_kg: str | None,
         status: str,
-        dry_run: bool,
         garmin_write_method: str | None = None,
+        garmin_measure_id: str | None = None,
         garmin_response: dict[str, Any] | None = None,
+        error_message: str | None = None,
         report: dict[str, Any] | None = None,
     ) -> None:
-        """Insert or ignore a sync event (idempotency_key is UNIQUE)."""
+        """Insert or update a sync event by idempotency key."""
         now = datetime.now(UTC).isoformat()
+        payload_hash = self.payload_hash(report or garmin_response or {})
         self.conn.execute(
-            """INSERT OR IGNORE INTO sync_events
-               (idempotency_key, source, source_measure_group_id,
-                source_measured_at_utc, garmin_date, weight_kg,
-                status, dry_run, garmin_write_method,
-                garmin_response_json, report_json, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO sync_events
+               (idempotency_key, source, withings_measure_id,
+                source_measured_at_utc, local_date, weight_kg, payload_hash,
+                status, garmin_write_method, garmin_measure_id,
+                garmin_response_json, error_message, report_json, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(idempotency_key) DO UPDATE SET
+                status = excluded.status,
+                garmin_write_method = excluded.garmin_write_method,
+                garmin_measure_id = excluded.garmin_measure_id,
+                garmin_response_json = excluded.garmin_response_json,
+                error_message = excluded.error_message,
+                report_json = excluded.report_json,
+                updated_at = excluded.updated_at""",
             (
                 idempotency_key,
                 source,
@@ -64,11 +105,14 @@ class SyncStore:
                 source_measured_at_utc,
                 garmin_date,
                 weight_kg,
+                payload_hash,
                 status,
-                1 if dry_run else 0,
                 garmin_write_method,
+                garmin_measure_id,
                 json.dumps(garmin_response) if garmin_response else None,
+                error_message,
                 json.dumps(report) if report else None,
+                now,
                 now,
             ),
         )
@@ -87,9 +131,21 @@ class SyncStore:
     def last_sync_time(self) -> str | None:
         """Return the ISO timestamp of the most recent sync event."""
         row = self.conn.execute(
-            "SELECT created_at FROM sync_events ORDER BY created_at DESC LIMIT 1"
+            """SELECT created_at FROM sync_events
+               WHERE status = 'synced'
+               ORDER BY created_at DESC LIMIT 1"""
         ).fetchone()
         return row["created_at"] if row else None
+
+    @staticmethod
+    def payload_hash(payload: dict[str, Any]) -> str:
+        encoded = json.dumps(
+            payload,
+            sort_keys=True,
+            ensure_ascii=False,
+            default=str,
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
 
     def close(self) -> None:
         if self._conn is not None:

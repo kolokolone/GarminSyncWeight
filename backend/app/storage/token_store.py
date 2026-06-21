@@ -1,13 +1,4 @@
-"""Persistent OAuth2 token store for Withings.
-
-Tokens are stored in the SQLite database at ``data/withings_tokens.db``.
-Only one token row is kept (the latest). Old rows are cleaned on write.
-
-Security:
-  - Tokens are never logged (redact.py catches ``access_token`` / ``refresh_token``).
-  - The database file is in ``data/`` which is excluded from git.
-  - No token is ever exposed through the API.
-"""
+"""Persistent OAuth2 token store for Withings."""
 
 import time
 from datetime import UTC, datetime
@@ -34,21 +25,24 @@ class TokenStore:
         return self._conn
 
     def save_token(self, token_data: dict[str, Any]) -> None:
-        """Atomically store the latest token, removing any previous row."""
+        """Atomically store the latest token, including rotated refresh tokens."""
         now = datetime.now(UTC).isoformat()
-        expires_in = token_data.get("expires_in", 3600)
+        expires_in = int(token_data.get("expires_in", 3600))
         expires_at = time.time() + expires_in
         self.conn.execute("DELETE FROM withings_tokens")  # keep at most one
         self.conn.execute(
             """INSERT INTO withings_tokens
-               (access_token, refresh_token, token_type, expires_at, scope, created_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+               (userid, access_token, refresh_token, token_type,
+                expires_at, scope, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
+                str(token_data.get("userid", "")) or None,
                 token_data["access_token"],
                 token_data.get("refresh_token", ""),
                 token_data.get("token_type", "Bearer"),
                 expires_at,
                 token_data.get("scope", ""),
+                now,
                 now,
             ),
         )
@@ -84,25 +78,39 @@ class TokenStore:
     def get_token(self) -> dict[str, Any] | None:
         """Return the stored token dict, or None."""
         row = self.conn.execute(
-            "SELECT access_token, refresh_token, token_type, expires_at, scope "
+            "SELECT userid, access_token, refresh_token, token_type, expires_at, scope "
             "FROM withings_tokens ORDER BY id DESC LIMIT 1"
         ).fetchone()
         if row is None:
             return None
+        row_dict = dict(row)
         return {
-            "access_token": row["access_token"],
-            "refresh_token": row["refresh_token"],
-            "token_type": row["token_type"],
-            "expires_at": row["expires_at"],
-            "scope": row["scope"],
+            "access_token": row_dict["access_token"],
+            "refresh_token": row_dict["refresh_token"],
+            "token_type": row_dict["token_type"],
+            "expires_at": row_dict["expires_at"],
+            "scope": row_dict["scope"],
+            "userid": row_dict.get("userid"),
         }
 
-    def is_token_expired(self) -> bool:
+    def is_token_expired(self, margin_seconds: int = 300) -> bool:
         """Return True if the stored token is expired or missing."""
         token = self.get_token()
         if token is None:
             return True
-        return time.time() >= token.get("expires_at", 0) - 60  # 1 min safety margin
+        return time.time() >= float(token.get("expires_at", 0)) - margin_seconds
+
+    def token_scope(self) -> str:
+        token = self.get_token()
+        return str(token.get("scope", "")) if token else ""
+
+    def has_scope(self, required_scope: str) -> bool:
+        scopes = {
+            scope.strip()
+            for scope in self.token_scope().replace(" ", ",").split(",")
+            if scope.strip()
+        }
+        return required_scope in scopes
 
     def get_access_token(self) -> str | None:
         """Return the current access token, or None."""
