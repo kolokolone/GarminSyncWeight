@@ -1,29 +1,12 @@
-"""Sync engine: orchestrates the Withings→Garmin pipeline.
+"""Controlled Withings → Garmin synchronization engine."""
 
-This is the central coordinator that wires together:
-  1. Fetch Withings measurements
-  2. Parse raw groups into canonical models
-  3. Map to Garmin candidates
-  4. Fetch existing Garmin data
-  5. Deduplicate / conflict-detect
-  6. Build dry-run report (or optionally execute)
-
-In v1, ONLY dry-run mode is active. Actual writes are guarded
-by multiple safety checks.
-"""
-
-from datetime import date, datetime, timezone
-from typing import Any, Literal
+from datetime import UTC, date, datetime, time, timedelta, tzinfo
+from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.config import Settings
-from app.models.garmin import GarminBodyCompositionCandidate
-from app.models.sync import (
-    DedupStatus,
-    DryRunCandidate,
-    DryRunReport,
-    DryRunSummary,
-    SyncEventStatus,
-)
+from app.models.garmin import GarminBodyCompositionCandidate, GarminWeighIn
+from app.models.sync import DedupStatus, SyncCandidate, SyncReport, SyncSummary
 from app.models.withings import BodyCompositionMeasurement
 from app.services.deduplicator import Deduplicator
 from app.services.garmin_client import GarminClient
@@ -47,10 +30,7 @@ def _log() -> Any:
 
 
 class SyncEngine:
-    """Orchestrates the full Withings→Garmin sync pipeline.
-
-    In v1, only ``run_dry_run()`` is available.
-    """
+    """Orchestrates active checks, reads, dedupe, writes and audit trail."""
 
     def __init__(
         self,
@@ -74,249 +54,291 @@ class SyncEngine:
         self._sync_store = sync_store
         self._report_builder = report_builder
 
-    # ── Public API ─────────────────────────────────────────────
-
-    async def run_dry_run(
+    async def run_sync(
         self,
         start_date: str,
         end_date: str,
         tz_name: str | None = None,
-    ) -> DryRunReport:
-        """Execute a dry-run of the Withings→Garmin sync pipeline.
-    
-        This is the main entry point for v1. It:
-        - Fetches Withings data
-        - Parses, maps, checks duplicates
-        - Builds a detailed report
-        - NEVER writes to Garmin
-    
-        Args:
-            start_date: ISO date string (YYYY-MM-DD).
-            end_date: ISO date string (YYYY-MM-DD).
-            tz_name: Optional timezone override (default: settings value).
+    ) -> SyncReport:
+        """Run a real, guarded, idempotent synchronization."""
+        tz = self._load_timezone(tz_name or self._settings.app_timezone)
+        start_day = self._parse_date(start_date)
+        end_day = self._parse_date(end_date)
+        if end_day < start_day:
+            raise ValueError("end_date must be greater than or equal to start_date")
 
-        Returns:
-            A ``DryRunReport`` with full details.
-        """
-        _log().info(
-            "DRY-RUN starting — period=%s → %s",
-            start_date,
-            end_date,
-        )
-
-        # ── 1. Parse dates ─────────────────────────────────────
+        attempt_id = self._sync_store.start_attempt(start_date, end_date)
+        _log().info("Sync starting — period=%s → %s", start_date, end_date)
         try:
-            dt_start = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)  # noqa: UP017
-            dt_end = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)  # noqa: UP017
-        except ValueError as exc:
-            raise ValueError(f"Invalid date format: {exc}") from exc
+            prerequisites = await self._check_prerequisites()
+            self._require_connected(prerequisites)
 
-        tz = tz_name or self._settings.app_timezone
-
-        # ── 2. Fetch Withings data ─────────────────────────────
-        withings_raw_groups: list[dict[str, Any]] = []
-        if self._withings_auth.has_token():
-            try:
-                withings_raw_groups = await self._withings_client.get_measurements(dt_start, dt_end)
-            except Exception as exc:
-                _log().error("Failed to fetch Withings data: %s", exc)
-        else:
-            _log().warning("No Withings token — skipping Withings fetch")
-
-        # ── 3. Parse measurements ──────────────────────────────
-        parsed: list[BodyCompositionMeasurement] = []
-        if withings_raw_groups:
+            dt_start, dt_end = self._local_day_window(start_day, end_day, tz)
+            withings_raw_groups = await self._withings_client.get_measurements(dt_start, dt_end)
             parsed = self._parser.parse_measure_groups(withings_raw_groups)
-            _log().info(
-                "Parsed %d measurements from %d raw groups",
-                len(parsed), len(withings_raw_groups),
+            parsed = self._filter_period(self._apply_per_day_strategy(parsed), start_day, end_day)
+
+            candidates = self._map_measurements(parsed)
+            garmin_weigh_ins = await self._fetch_garmin_weigh_ins(start_day, end_day)
+            garmin_bc = await self._garmin.get_body_composition(
+                start_day - timedelta(days=self._settings.garmin_lookback_days),
+                end_day + timedelta(days=self._settings.garmin_lookahead_days),
             )
 
-        # ── 4. Apply per-day strategy ─────────────────────────
-        if self._settings.withings_per_day_strategy == "latest_per_day":
-            parsed = self._keep_latest_per_day(parsed)
+            report_candidates: list[SyncCandidate] = []
+            summary = SyncSummary(
+                withings_raw_count=len(withings_raw_groups),
+                withings_parsed_count=len(parsed),
+                garmin_existing_count=len(garmin_weigh_ins) + len(garmin_bc),
+                candidates_count=len(candidates),
+            )
 
-        # ── 5. Map to Garmin candidates ───────────────────────
+            for candidate in candidates:
+                item = await self._process_candidate(
+                    candidate,
+                    garmin_weigh_ins,
+                    garmin_bc,
+                    summary,
+                )
+                report_candidates.append(item)
+
+            report = SyncReport(
+                period={"start_date": start_date, "end_date": end_date, "timezone": str(tz)},
+                prerequisites=prerequisites,
+                withings={
+                    "raw_groups_count": len(withings_raw_groups),
+                    "parsed_measurements_count": len(parsed),
+                    "measurements": [self._measurement_summary(m) for m in parsed],
+                },
+                garmin={
+                    "existing_weigh_ins_count": len(garmin_weigh_ins),
+                    "existing_body_composition_count": len(garmin_bc),
+                },
+                candidates=report_candidates,
+                summary=summary,
+            )
+            self._report_builder.save(report)
+            self._sync_store.finish_attempt(attempt_id, "completed", report.summary.model_dump())
+            _log().info(
+                "Sync completed — synced=%d existing=%d conflicts=%d invalid=%d failed=%d",
+                summary.synced_count,
+                summary.skipped_existing_count,
+                summary.conflicts_count,
+                summary.invalid_count,
+                summary.failed_count,
+            )
+            return report
+        except Exception as exc:
+            self._sync_store.finish_attempt(attempt_id, "failed", error_message=str(exc))
+            _log().error("Sync refused or failed: %s", exc)
+            raise
+
+    async def _check_prerequisites(self) -> dict[str, Any]:
+        withings = await self._withings_auth.check_connection()
+        garmin = await self._garmin.check_connection()
+        return {"withings": withings, "garmin": garmin}
+
+    @staticmethod
+    def _require_connected(prerequisites: dict[str, Any]) -> None:
+        failures = []
+        for name in ("withings", "garmin"):
+            status = prerequisites.get(name, {})
+            if not status.get("connected"):
+                failures.append(f"{name}: {status.get('message', 'not connected')}")
+        if failures:
+            raise RuntimeError("Synchronisation refusée: " + "; ".join(failures))
+
+    async def _fetch_garmin_weigh_ins(self, start_day: date, end_day: date) -> list[GarminWeighIn]:
+        search_start = start_day - timedelta(days=self._settings.garmin_lookback_days)
+        search_end = end_day + timedelta(days=self._settings.garmin_lookahead_days)
+        results: list[GarminWeighIn] = []
+        current = search_start
+        while current <= search_end:
+            results.extend(await self._garmin.get_daily_weigh_ins(current))
+            current += timedelta(days=1)
+        return results
+
+    def _map_measurements(
+        self,
+        measurements: list[BodyCompositionMeasurement],
+    ) -> list[GarminBodyCompositionCandidate]:
         candidates: list[GarminBodyCompositionCandidate] = []
-        for m in parsed:
+        for measurement in measurements:
             try:
-                candidate = self._mapper.map(m)
-                candidates.append(candidate)
+                candidates.append(self._mapper.map(measurement))
             except Exception as exc:
                 _log().error(
                     "Mapping failed for measurement %s: %s",
-                    m.source_measure_group_id, exc,
+                    measurement.source_measure_group_id,
+                    exc,
                 )
+        return candidates
 
-        # ── 6. Fetch existing Garmin data for search window ───
-        search_start, search_end = self._dedup.search_window()
-        garmin_weigh_ins = await self._garmin.get_daily_weigh_ins(search_end)  # single date
-        garmin_bc = await self._garmin.get_body_composition(search_start, search_end)
-        _log().info(
-            "Garmin data: %d weigh-ins, %d body compositions in window",
-            len(garmin_weigh_ins),
-            len(garmin_bc),
-        )
+    async def _process_candidate(
+        self,
+        candidate: GarminBodyCompositionCandidate,
+        garmin_weigh_ins: list[GarminWeighIn],
+        garmin_bc: list[Any],
+        summary: SyncSummary,
+    ) -> SyncCandidate:
+        status = self._dedup.classify(candidate, garmin_weigh_ins, garmin_bc)
+        if self._dedup.should_skip(status):
+            decision, reason = self._decision_for_status(status)
+            self._increment_summary(summary, decision)
+            self._save_candidate_event(candidate, decision, reason)
+            return self._candidate_report(candidate, status, decision, reason)
 
-        # ── 7. Deduplicate each candidate ─────────────────────
-        report_candidates: list[DryRunCandidate] = []
-        summary = DryRunSummary()
-
-        for candidate in candidates:
-            status = self._dedup.classify(candidate, garmin_weigh_ins, garmin_bc)
-            decision: Literal["would_write", "skip"]
-            should_skip = self._dedup.should_skip(status)
-
-            if should_skip:
-                decision = "skip"
-                self._increment_summary(summary, status)
-            else:
-                decision = "would_write"
-                summary.would_write_count += 1
-
-            # Build the Garmin call description
-            garmin_method = candidate.garmin_write_method() if decision == "would_write" else "none"
-            garmin_call = {
-                "method": garmin_method,
-                "params": candidate.garmin_params() if decision == "would_write" else {},
-            }
-
-            # Save to sync_events table
-            self._sync_store.save_event(
-                idempotency_key=candidate.idempotency_key,
-                source="withings",
-                source_measure_group_id=candidate.source_measure_group_id,
-                source_measured_at_utc=(
-                    candidate.measured_at_local.isoformat()
-                    if candidate.measured_at_local else None
-                ),
-                garmin_date=candidate.date.isoformat(),
-                weight_kg=str(candidate.weight) if candidate.weight else None,
-                status=f"dry_run_{status}" if should_skip else "dry_run_new_candidate",
-                dry_run=True,
-                garmin_write_method=garmin_method if decision == "would_write" else None,
+        garmin_params = candidate.garmin_params()
+        garmin_params["date"] = candidate.date.isoformat()
+        try:
+            response = await self._garmin.add_body_composition(**garmin_params)
+            summary.synced_count += 1
+            self._save_candidate_event(candidate, "synced", "Écriture Garmin réussie.", response)
+            return self._candidate_report(
+                candidate,
+                status,
+                "synced",
+                "Écriture Garmin réussie.",
+                response,
             )
-
-            warnings = list(candidate.mapping_warnings)
-            if warnings:
-                summary.warnings_count += len(warnings)
-
-            report_candidates.append(
-                DryRunCandidate(
-                    date=candidate.date.isoformat(),
-                    measured_at_local=(
-                        candidate.measured_at_local.isoformat()
-                        if candidate.measured_at_local else None
-                    ),
-                    source_measure_group_id=candidate.source_measure_group_id,
-                    mapped_fields=candidate.mapped_fields,
-                    ignored_fields=candidate.ignored_fields,
-                    null_fields=candidate.null_fields,
-                    warnings=warnings,
-                    dedup_status=status,
-                    decision=decision,
-                    garmin_call=garmin_call,
-                    idempotency_key=candidate.idempotency_key,
-                )
+        except Exception as exc:
+            summary.failed_count += 1
+            self._save_candidate_event(
+                candidate,
+                "failed",
+                "Écriture Garmin échouée.",
+                error_message=str(exc),
             )
-
-        # ── 8. Build report ──────────────────────────────────
-        report = DryRunReport(
-            period={
-                "start_date": start_date,
-                "end_date": end_date,
-                "timezone": tz if isinstance(tz, str) else str(tz),
-            },
-            withings={
-                "raw_groups_count": len(withings_raw_groups),
-                "parsed_measurements_count": len(parsed),
-                "measurements": [
-                    {
-                        "group_id": m.source_measure_group_id,
-                        "date_local": m.measured_at_local.isoformat(),
-                        "weight_kg": str(m.weight_kg) if m.weight_kg else None,
-                        "fields": self._measurement_fields(m),
-                    }
-                    for m in parsed
-                ],
-            },
-            garmin={
-                "daily_weigh_ins": [
-                    {"date": str(w.date), "weight_kg": str(w.weight_kg) if w.weight_kg else None}
-                    for w in garmin_weigh_ins
-                ],
-                "body_composition": [
-                    {"date": str(bc.date), "weight_kg": str(bc.weight_kg) if bc.weight_kg else None}
-                    for bc in garmin_bc
-                ],
-            },
-            candidates=report_candidates,
-            summary=summary,
-        )
-
-        # ── 9. Save report to disk ────────────────────────────
-        self._report_builder.save(report)
-
-        _log().info(
-            "DRY-RUN completed — would_write=%d skipped=%d conflicts=%d invalid=%d",
-            summary.would_write_count,
-            summary.skipped_duplicates_count,
-            summary.conflicts_count,
-            summary.invalid_count,
-        )
-        return report
-
-    # ── Internal helpers ───────────────────────────────────────
+            return self._candidate_report(
+                candidate,
+                status,
+                "failed",
+                "Écriture Garmin échouée.",
+                error_message=str(exc),
+            )
 
     @staticmethod
-    def _keep_latest_per_day(
+    def _decision_for_status(status: DedupStatus) -> tuple[str, str]:
+        if status in (
+            "duplicate_exact_or_near",
+            "duplicate_body_composition",
+            "already_synced_by_garminsync",
+        ):
+            return "skipped_existing", "Mesure déjà présente ou déjà traitée."
+        if status in ("possible_duplicate", "conflict_same_day"):
+            return "skipped_conflict", "Mesure Garmin proche ou différente le même jour."
+        return "invalid", "Mesure source incomplète ou incohérente."
+
+    @staticmethod
+    def _increment_summary(summary: SyncSummary, decision: str) -> None:
+        if decision == "skipped_existing":
+            summary.skipped_existing_count += 1
+        elif decision == "skipped_conflict":
+            summary.conflicts_count += 1
+        elif decision == "invalid":
+            summary.invalid_count += 1
+
+    def _save_candidate_event(
+        self,
+        candidate: GarminBodyCompositionCandidate,
+        status: str,
+        reason: str,
+        garmin_response: dict[str, Any] | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        self._sync_store.save_event(
+            idempotency_key=candidate.idempotency_key,
+            source="withings",
+            source_measure_group_id=candidate.source_measure_group_id,
+            source_measured_at_utc=(
+                candidate.measured_at_local.isoformat() if candidate.measured_at_local else None
+            ),
+            garmin_date=candidate.date.isoformat(),
+            weight_kg=str(candidate.weight) if candidate.weight else None,
+            status=status,
+            garmin_write_method="add_body_composition" if status == "synced" else None,
+            garmin_response=garmin_response,
+            error_message=error_message,
+            report={"reason": reason, "mapped_fields": candidate.mapped_fields},
+        )
+
+    @staticmethod
+    def _candidate_report(
+        candidate: GarminBodyCompositionCandidate,
+        dedup_status: DedupStatus,
+        decision: str,
+        reason: str,
+        garmin_response: dict[str, Any] | None = None,
+        error_message: str | None = None,
+    ) -> SyncCandidate:
+        return SyncCandidate(
+            date=candidate.date.isoformat(),
+            measured_at_local=(
+                candidate.measured_at_local.isoformat() if candidate.measured_at_local else None
+            ),
+            source_measure_group_id=candidate.source_measure_group_id,
+            mapped_fields=candidate.mapped_fields,
+            ignored_fields=candidate.ignored_fields,
+            null_fields=candidate.null_fields,
+            warnings=candidate.mapping_warnings,
+            dedup_status=dedup_status,
+            decision=decision,  # type: ignore[arg-type]
+            reason=reason,
+            garmin_call={"method": "add_body_composition", "params": candidate.garmin_params()},
+            garmin_response=garmin_response,
+            error_message=error_message,
+            idempotency_key=candidate.idempotency_key,
+        )
+
+    def _apply_per_day_strategy(
+        self,
         measurements: list[BodyCompositionMeasurement],
     ) -> list[BodyCompositionMeasurement]:
-        """Keep only the latest measurement per garmin_date."""
+        if self._settings.withings_per_day_strategy != "latest_per_day":
+            return measurements
         by_date: dict[date, BodyCompositionMeasurement] = {}
-        for m in measurements:
-            existing = by_date.get(m.garmin_date)
-            if existing is None or m.measured_at_utc > existing.measured_at_utc:
-                by_date[m.garmin_date] = m
+        for measurement in measurements:
+            existing = by_date.get(measurement.garmin_date)
+            if existing is None or measurement.measured_at_utc > existing.measured_at_utc:
+                by_date[measurement.garmin_date] = measurement
         return list(by_date.values())
 
     @staticmethod
-    def _increment_summary(summary: DryRunSummary, status: DedupStatus) -> None:
-        if status in (
-            "duplicate_exact_or_near", "duplicate_body_composition",
-            "already_synced_by_garminsync",
-        ):
-            summary.skipped_duplicates_count += 1
-        elif status == "possible_duplicate":
-            summary.possible_duplicates_count += 1
-        elif status == "conflict_same_day":
-            summary.conflicts_count += 1
-        elif status.startswith("invalid"):
-            summary.invalid_count += 1
+    def _filter_period(
+        measurements: list[BodyCompositionMeasurement],
+        start_day: date,
+        end_day: date,
+    ) -> list[BodyCompositionMeasurement]:
+        return [m for m in measurements if start_day <= m.garmin_date <= end_day]
 
     @staticmethod
-    def _measurement_fields(m: BodyCompositionMeasurement) -> dict[str, str | None]:
+    def _parse_date(value: str) -> date:
+        try:
+            return datetime.strptime(value, "%Y-%m-%d").date()
+        except ValueError as exc:
+            raise ValueError(f"Invalid date format: {value}. Expected YYYY-MM-DD.") from exc
+
+    @staticmethod
+    def _load_timezone(tz_name: str) -> tzinfo:
+        try:
+            return ZoneInfo(tz_name)
+        except ZoneInfoNotFoundError:
+            _log().warning("Timezone '%s' unavailable; falling back to UTC", tz_name)
+            return UTC
+
+    @staticmethod
+    def _local_day_window(start_day: date, end_day: date, tz: tzinfo) -> tuple[datetime, datetime]:
+        local_start = datetime.combine(start_day, time.min, tzinfo=tz)
+        local_end = datetime.combine(end_day + timedelta(days=1), time.min, tzinfo=tz)
+        return local_start.astimezone(UTC), local_end.astimezone(UTC)
+
+    @staticmethod
+    def _measurement_summary(m: BodyCompositionMeasurement) -> dict[str, Any]:
         return {
+            "group_id": m.source_measure_group_id,
+            "date_local": m.measured_at_local.isoformat(),
             "weight_kg": str(m.weight_kg) if m.weight_kg else None,
             "fat_percent": str(m.fat_percent) if m.fat_percent else None,
-            "fat_mass_kg": str(m.fat_mass_kg) if m.fat_mass_kg else None,
             "muscle_mass_kg": str(m.muscle_mass_kg) if m.muscle_mass_kg else None,
             "bone_mass_kg": str(m.bone_mass_kg) if m.bone_mass_kg else None,
-            "hydration_mass_kg": str(m.hydration_mass_kg) if m.hydration_mass_kg else None,
-            "bmi": str(m.bmi) if m.bmi else None,
         }
-
-    @staticmethod
-    def _dedup_status_to_event_status(status: DedupStatus) -> SyncEventStatus:
-        mapping: dict[DedupStatus, SyncEventStatus] = {
-            "new_candidate": "dry_run_new_candidate",
-            "duplicate_exact_or_near": "dry_run_duplicate",
-            "possible_duplicate": "dry_run_possible_duplicate",
-            "duplicate_body_composition": "dry_run_duplicate",
-            "conflict_same_day": "dry_run_conflict",
-            "invalid_missing_weight": "dry_run_invalid",
-            "invalid_date": "dry_run_invalid",
-            "invalid_outlier": "dry_run_invalid",
-            "already_synced_by_garminsync": "dry_run_duplicate",
-        }
-        return mapping.get(status, "dry_run_invalid")

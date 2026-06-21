@@ -20,31 +20,29 @@ _FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture
-def settings() -> Settings:
+def settings(tmp_path: Path) -> Settings:
     return Settings(  # type: ignore[call-arg]
         withings_client_id="test_client_id",
         withings_client_secret="test_client_secret",
         app_timezone="Europe/Paris",
-        data_dir=Path("./data"),
-        log_dir=Path("./logs"),
-        runtime_dir=Path("./runtime"),
+        data_dir=tmp_path / "data",
+        log_dir=tmp_path / "logs",
+        runtime_dir=tmp_path / "runtime",
         user_height_m=1.75,
-        dry_run_default=True,
-        enable_garmin_writes=False,
         weight_duplicate_epsilon_kg=0.05,
         weight_conflict_epsilon_kg=0.2,
     )
 
 
 @pytest.fixture
-def settings_no_height() -> Settings:
+def settings_no_height(tmp_path: Path) -> Settings:
     return Settings(  # type: ignore[call-arg]
         withings_client_id="test_client_id",
         withings_client_secret="test_client_secret",
         app_timezone="Europe/Paris",
-        data_dir=Path("./data"),
-        log_dir=Path("./logs"),
-        runtime_dir=Path("./runtime"),
+        data_dir=tmp_path / "data_no_height",
+        log_dir=tmp_path / "logs_no_height",
+        runtime_dir=tmp_path / "runtime_no_height",
         user_height_m=None,
     )
 

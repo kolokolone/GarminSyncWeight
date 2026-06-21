@@ -2,6 +2,7 @@
 
 from app.config import Settings, get_settings
 from app.models.sync import StatusResponse
+from app.services.garmin_client import GarminClient
 from app.services.withings_auth import WithingsAuthService
 from app.storage.sync_store import SyncStore
 from app.storage.token_store import TokenStore
@@ -16,7 +17,7 @@ def _get_auth(settings: Settings = Depends(get_settings)) -> WithingsAuthService
 
 
 @router.get("/api/status", response_model=StatusResponse)
-def get_status(
+async def get_status(
     settings: Settings = Depends(get_settings),
     auth: WithingsAuthService = Depends(_get_auth),
 ) -> StatusResponse:
@@ -26,6 +27,8 @@ def get_status(
     """
     withings_configured = auth.is_configured()
     withings_token = auth.has_token()
+    withings_status = await auth.check_connection()
+    garmin_status = await GarminClient(settings).check_connection()
 
     sync_store = SyncStore(settings.resolved_data_dir)
     last_sync = sync_store.last_sync_time()
@@ -42,12 +45,15 @@ def get_status(
             "Withings client ID not configured. "
             "Set WITHINGS_CLIENT_ID and WITHINGS_CLIENT_SECRET."
         )
-    elif not withings_token:
+    elif not withings_status.get("connected"):
         state = "needs_auth"
-        message = "Withings OAuth2 token missing. Authenticate via /api/withings/auth/start."
+        message = withings_status.get("message", "Withings non connecté.")
+    elif not garmin_status.get("connected"):
+        state = "needs_auth"
+        message = garmin_status.get("message", "Garmin non connecté.")
     else:
         state = "ready"
-        message = "GarminSyncWeight ready. Use POST /api/sync/dry-run to test the pipeline."
+        message = "GarminSyncWeight prêt pour une synchronisation contrôlée."
 
     return StatusResponse(
         app_name="GarminSyncWeight",
@@ -56,8 +62,8 @@ def get_status(
         message=message,
         withings_configured=withings_configured,
         withings_token_present=withings_token,
-        dry_run_default=settings.dry_run_default,
-        write_enabled=settings.enable_garmin_writes,
+        withings_connection_state=str(withings_status.get("state", "unknown")),
+        garmin_connection_state=str(garmin_status.get("state", "unknown")),
         last_sync=last_sync,
         last_report=last_report,
     )
