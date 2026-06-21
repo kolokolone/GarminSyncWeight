@@ -1127,11 +1127,6 @@ function renderDashboard() {
     flow.append(wrap);
   }
 
-  // Compact history (last 10 items)
-  if (state.recent && state.recent.items && state.recent.items.length > 0) {
-    flow.append(renderCompactHistory(state.recent.items));
-  }
-
   // Mapping table
   if (state.preview && state.preview.status === "ready" && state.preview.field_mapping?.length) {
     flow.append(renderMappingTable(state.preview));
