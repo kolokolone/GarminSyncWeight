@@ -34,7 +34,8 @@ class Settings(BaseSettings):
     app_timezone: str = "Europe/Paris"
     user_height_m: float | None = None
 
-    # ─── Garmin authentication ────────────────────────────────
+    # ─── Garmin authentication / Taxuspt garmin_mcp ───────────
+    garmin_mcp_source: str = "git+https://github.com/Taxuspt/garmin_mcp"
     garmin_token_dir: Path = Field(default=Path.home() / ".garminconnect")
     garmin_auth_command: str = (
         "uvx --python 3.12 --from git+https://github.com/Taxuspt/garmin_mcp garmin-mcp-auth"
@@ -52,9 +53,8 @@ class Settings(BaseSettings):
     runtime_dir: Path = Field(default=Path("./runtime"))
 
     # ─── Sync behaviour ───────────────────────────────────────
-    dry_run_default: bool = True
-    enable_garmin_writes: bool = False
-    first_write_confirmation_required: bool = True
+    sync_requires_active_connections: bool = True
+    admin_api_token: str = ""
 
     # ─── Anti-duplicate thresholds ────────────────────────────
     weight_duplicate_epsilon_kg: float = 0.05
@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     log_format: Literal["jsonl", "text"] = "jsonl"
 
     # ─── Version ──────────────────────────────────────────────
-    app_version: str = "0.1.0"
+    app_version: str = "0.1.1"
 
     @field_validator("app_host")
     @classmethod

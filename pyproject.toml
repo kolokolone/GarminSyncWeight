@@ -1,7 +1,7 @@
 [project]
 name = "GarminSyncWeight"
-version = "0.1.0"
-description = "Bridge Withings Body Cardio to Garmin Connect — safe dry-run pipeline"
+version = "0.1.1"
+description = "Controlled Withings Body Cardio to Garmin Connect synchronization"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.116.0",
@@ -11,6 +11,8 @@ dependencies = [
     "pyyaml>=6.0.0",
     "uvicorn[standard]>=0.35.0",
     "aiosqlite>=0.20.0",
+    "garminconnect>=0.3.2",
+    "tzdata>=2025.2",
 ]
 
 [dependency-groups]
