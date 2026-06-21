@@ -1,102 +1,57 @@
 # Sécurité — GarminSyncWeight
 
+GarminSyncWeight manipule des données de santé, des tokens OAuth et des credentials Garmin temporaires. Le service doit rester local sauf authentification forte ajoutée par l’utilisateur.
+
 ## Principes
 
-1. **Aucune écriture Garmin sans validation humaine explicite**
-2. **Aucun secret dans le code, les logs, ou Git**
-3. **Aucun endpoint de suppression Garmin**
-4. **Bind localhost par défaut**
+1. Aucun secret dans le code, Git, l’UI ou les logs.
+2. Bind Docker sur `127.0.0.1:8010` par défaut.
+3. Withings et Garmin doivent être vérifiés activement avant synchronisation.
+4. La lecture Garmin et la lecture Withings doivent réussir avant toute écriture.
+5. Aucune suppression ou modification de mesure Garmin existante.
+6. Les conflits et doublons sont refusés.
 
 ## Secrets
 
-### Variables d'environnement (`.env`)
+Variables sensibles :
 
-Les secrets suivants sont chargés depuis `.env` (jamais versionné) :
-
-- `WITHINGS_CLIENT_ID`
 - `WITHINGS_CLIENT_SECRET`
+- `GARMIN_EMAIL`, `GARMIN_PASSWORD`, OTP/MFA uniquement pendant l’appel d’authentification
+- tokens Withings dans SQLite
+- tokens Garmin dans `.garminconnect`
 
-### Tokens OAuth2
+Redaction automatique : `access_token`, `refresh_token`, `client_secret`, `Authorization: Bearer`, `password`, `cookie`, `secret`, emails.
 
-Les tokens Withings sont stockés dans `data/withings_tokens.db` (SQLite).
-Le fichier est exclu de Git via `.gitignore` (`*tokens*`).
+## Garmin
 
-### Redaction automatique
+GarminSyncWeight utilise `Taxuspt/garmin_mcp` pour l’authentification :
 
-Les patterns suivants sont systématiquement masqués par `[REDACTED]`
-dans les logs et les réponses API :
-
-- `access_token`
-- `refresh_token`
-- `client_secret`
-- `Authorization: Bearer`
-- `password`, `passwd`
-- `cookie`
-- `secret`
-- Adresses email
-
-### Fichiers exclus de Git
-
-```gitignore
-.env
-.env.*
-!.env.example
-logs/*
-runtime/*
-data/*
-*tokens*
-*secret*
-*password*
+```powershell
+uvx --python 3.12 --from git+https://github.com/Taxuspt/garmin_mcp garmin-mcp-auth
+uvx --python 3.12 --from git+https://github.com/Taxuspt/garmin_mcp garmin-mcp-auth --verify
 ```
 
-## Garmin — Garde-fous d'écriture
+Le backend ne stocke pas le mot de passe Garmin. Les tokens sont persistés dans `.garminconnect`.
 
-Toute écriture dans Garmin est protégée par **8 conditions** :
+## Withings
 
-1. `ENABLE_GARMIN_WRITES=true`
-2. `FIRST_WRITE_CONFIRMATION_REQUIRED=false` (ou confirmation persistée)
-3. Argument CLI `--execute` obligatoire
-4. Mode `dry_run=False`
-5. Statut anti-doublon = `new_candidate` uniquement
-6. `idempotency_key` non déjà écrite
-7. Poids valide (20-300 kg)
-8. Méthode Garmin autorisée explicitement
+Le backend utilise OAuth2 Authorization Code avec `state` CSRF. Le refresh token Withings est rotatif : chaque réponse de refresh remplace le refresh token précédent en base.
 
-Si une seule condition n'est pas remplie → refus avec message explicite.
+Le scope `user.metrics` est obligatoire.
 
-### Interdictions absolues
+## Routes sensibles
 
-- **Aucun appel à `delete_weigh_ins`**
-- **Aucun endpoint DELETE exposé**
-- **Aucun remplacement automatique de données**
-- **Aucune écriture sans confirmation**
-- **Aucune écriture en cas de conflit**
-- **Aucune écriture en cas de doublon probable**
+Ces routes doivent rester locales ou protégées par un reverse proxy authentifié :
 
-## API locale
+- configuration Withings ;
+- callback OAuth ;
+- authentification Garmin ;
+- lancement de synchronisation ;
+- consultation des logs ;
+- consultation des statuts.
 
-- Écoute sur `127.0.0.1:8010` par défaut
-- Non exposée publiquement
-- Si exposition Docker, binder sur `127.0.0.1` uniquement
-- Variable `APP_HOST` documentée comme "non recommandée" pour `0.0.0.0`
+Ne pas exposer publiquement l’application sans authentification forte. Attention particulière aux tunnels Cloudflare ou reverse proxies.
 
-## Logs
+## Tests
 
-- Format JSONL structuré
-- Fichiers séparés par sous-système
-- Rotation automatique (10 Mo, 5 fichiers)
-- Redaction centralisée avant écriture
-- Aucun token dans les logs (vérifié par test automatisé)
-
-## Tests de sécurité
-
-Les tests suivants vérifient la sécurité :
-
-- `test_log_redaction_tokens` — tokens masqués dans les logs
-- `test_log_redaction_authorization_header` — header Authorization masqué
-- `test_log_redaction_password` — mots de passe masqués
-- `test_log_redaction_client_secret` — client_secret masqué
-- `test_log_redaction_email` — emails masqués
-- `test_no_delete_endpoint_available` — aucun endpoint de suppression
-- `test_execute_blocked_by_default` — écriture bloquée par défaut
-- `test_dry_run_never_calls_write` — dry-run n'écrit jamais
+Les tests vérifient la redaction, l’absence d’endpoint de suppression Garmin et les comportements de synchronisation sans doublon.
