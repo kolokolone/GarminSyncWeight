@@ -7,8 +7,7 @@
 const state = {
   status: null, garmin: null, withings: null, withingsConfig: null,
   preview: null, recent: null, syncResult: null,
-  tab: "sync",
-  subRoute: "dashboard",
+  page: "dashboard",
 };
 
 const $ = (s) => document.querySelector(s);
@@ -28,96 +27,47 @@ async function api(path, opts = {}) {
   return body;
 }
 
-/* ── SPA routing (tab + subRoute) ────────────────────────────── */
+/* ── SPA routing (flat pages) ────────────────────────────────── */
 
-const TAB_ROUTES = {
-  sync: { default_: "dashboard", subs: ["dashboard", "history", "stats"], label: "Sync" },
-  config: { default_: "settings", subs: ["settings", "logs"], label: "Config" },
+const PAGE_URLS = {
+  dashboard: "/",
+  history: "/historique",
+  stats: "/statistiques",
+  settings: "/reglages",
+  logs: "/logs",
 };
 
-const SUB_LABELS = {
-  dashboard: "Tableau de bord",
-  history: "Historique",
-  stats: "Statistiques",
-  settings: "Réglages",
-  logs: "Logs",
+const PATH_TO_PAGE = {
+  "": "dashboard",
+  "/": "dashboard",
+  "dashboard": "dashboard",
+  "historique": "history",
+  "statistiques": "stats",
+  "reglages": "settings",
+  "logs": "logs",
 };
 
-function setRoute(route, push = true) {
-  if (!route) route = "sync";
-  const parts = route.split("/").filter(Boolean);
-  const tab = parts[0] === "config" ? "config" : "sync";
-  const cfg = TAB_ROUTES[tab];
-  let sub = parts[1] || cfg.default_;
-  if (!cfg.subs.includes(sub)) sub = cfg.default_;
+const VALID_PAGES = ["dashboard", "history", "stats", "settings", "logs"];
 
-  state.tab = tab;
-  state.subRoute = sub;
+function setRoute(page, push = true) {
+  if (!VALID_PAGES.includes(page)) page = "dashboard";
+  state.page = page;
 
-  // Build canonical URL
-  let href;
-  if (tab === "sync" && sub === "dashboard") href = "/";
-  else if (tab === "sync") href = `/${sub}`;
-  else if (tab === "config" && sub === "settings") href = "/config";
-  else href = `/config/${sub}`;
-
+  const href = PAGE_URLS[page] || "/";
   if (push) history.pushState({}, "", href);
 
-  // Update main tab links
-  $$(".tab-link").forEach((el) =>
-    el.classList.toggle("active", el.dataset.tab === tab)
+  // Update nav link active state
+  $$("[data-route]").forEach((el) =>
+    el.classList.toggle("active", el.dataset.route === page)
   );
-
-  // Update page indicator
-  const ind = $("#page-indicator");
-  if (ind) {
-    const subLabel = SUB_LABELS[sub] || sub;
-    ind.textContent = subLabel;
-  }
 
   render();
 }
 
 function routeFromPath() {
   const p = location.pathname.replace(/^\//, "").split("/").filter(Boolean);
-  if (p.length === 0) return "sync/dashboard";
-
-  // Legacy route redirects
-  if (p[0] === "historique") return "sync/history";
-  if (p[0] === "reglages") return "config/settings";
-  if (p[0] === "logs") return "config/logs";
-  if (p[0] === "dashboard") return "sync/dashboard";
-  if (p[0] === "sync") {
-    const sub = p[1] || "dashboard";
-    return `sync/${sub}`;
-  }
-  if (p[0] === "config") {
-    const sub = p[1] || "settings";
-    return `config/${sub}`;
-  }
-
-  return "sync/dashboard";
-}
-
-function renderSubNav(tab) {
-  const cfg = TAB_ROUTES[tab];
-  if (!cfg) return null;
-  const nav = document.createElement("div");
-  nav.className = "subnav";
-  for (const sub of cfg.subs) {
-    const a = document.createElement("a");
-    const label = SUB_LABELS[sub] || sub;
-    a.textContent = label;
-    a.dataset.sub = sub;
-    if (sub === state.subRoute) a.classList.add("active");
-    a.addEventListener("click", (e) => {
-      e.preventDefault();
-      const route = tab === "sync" ? sub : `config/${sub}`;
-      setRoute(route);
-    });
-    nav.append(a);
-  }
-  return nav;
+  const key = p[0] || "/";
+  return PATH_TO_PAGE[key] || "dashboard";
 }
 
 /* ── Helpers ──────────────────────────────────────────────────── */
@@ -1552,7 +1502,16 @@ async function loadDashboardData() {
   if (state._dashboardLoading) return;
   const w = state.withings || {};
   const g = state.garmin || {};
-  if (!w.connected || !g.token_valid) return;
+
+  // Si les services ne sont pas prêts, on ne bloque pas l'affichage
+  if (!w.connected || !g.token_valid) {
+    // Nettoyer tout état bloqué
+    state._dashboardLoading = false;
+    state._dashboardFetchedAt = Date.now();
+    render();
+    return;
+  }
+
   state._dashboardLoading = true;
 
   // Session cache: skip refetch if fetched < 10s ago
@@ -1563,20 +1522,34 @@ async function loadDashboardData() {
     return;
   }
 
-  const [previewResult, recentResult] = await Promise.allSettled([
-    api("/api/measurements/latest?days=30"),
-    api("/api/measurements/recent?days=30"),
-  ]);
+  try {
+    // Timeout de sécurité 15s pour éviter le blocage permanent
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), 15000);
 
-  if (previewResult.status === "fulfilled") state.preview = previewResult.value;
-  else state.preview = null;
+    const [previewResult, recentResult] = await Promise.allSettled([
+      fetch("/api/measurements/latest?days=30", { signal: ac.signal }).then(r => r.json()),
+      fetch("/api/measurements/recent?days=30", { signal: ac.signal }).then(r => r.json()),
+    ]);
 
-  if (recentResult.status === "fulfilled") state.recent = recentResult.value;
-  else state.recent = null;
+    clearTimeout(t);
 
-  state._dashboardFetchedAt = Date.now();
-  state._dashboardLoading = false;
-  render();
+    if (previewResult.status === "fulfilled") state.preview = previewResult.value;
+    else state.preview = null;
+
+    if (recentResult.status === "fulfilled") state.recent = recentResult.value;
+    else state.recent = null;
+
+    state._dashboardFetchedAt = Date.now();
+  } catch (e) {
+    // AbortController peut jeter, on ignore
+    state.preview = null;
+    state.recent = null;
+    state._dashboardFetchedAt = Date.now();
+  } finally {
+    state._dashboardLoading = false;
+    render();
+  }
 }
 
 /* ── Historique ──────────────────────────────────────────────── */
@@ -2009,6 +1982,66 @@ Dernière vérification: ${w.message || "—"}</pre></div>`;
 
   grid.append(gCard);
 
+  // ── Profil card (taille) ──────────────────────────────────────
+  const pCard = document.createElement("div");
+  pCard.className = "settings-card";
+
+  const pHead = document.createElement("div");
+  pHead.className = "card-head";
+  const pTitle = document.createElement("h2");
+  pTitle.textContent = "Profil";
+  const pBadge = document.createElement("span");
+  pBadge.className = "badge ok";
+  pBadge.textContent = "local";
+  pHead.append(pTitle, pBadge);
+  pCard.append(pHead);
+
+  const pSub = document.createElement("p");
+  pSub.className = "sc-subtitle";
+  pSub.textContent = "Utilisé pour le calcul contextuel de l'IMC et des métriques.";
+  pCard.append(pSub);
+
+  const pForm = document.createElement("div");
+  pForm.className = "form";
+  pForm.style.marginTop = "12px";
+
+  const heightLabel = document.createElement("label");
+  heightLabel.textContent = "Taille (cm)";
+  const heightInput = document.createElement("input");
+  heightInput.id = "settings-height";
+  heightInput.type = "number";
+  heightInput.step = "1";
+  heightInput.min = "100";
+  heightInput.max = "250";
+  heightInput.placeholder = "175";
+  heightInput.value = state._heightCm || "";
+  heightInput.addEventListener("input", () => {
+    state._heightCm = heightInput.value ? parseFloat(heightInput.value) : null;
+    savePrefs();
+  });
+  heightLabel.append(heightInput);
+  pForm.append(heightLabel);
+
+  const weightLabel = document.createElement("label");
+  weightLabel.textContent = "Poids objectif (kg)";
+  const weightInput = document.createElement("input");
+  weightInput.id = "settings-target-weight";
+  weightInput.type = "number";
+  weightInput.step = "0.1";
+  weightInput.min = "40";
+  weightInput.max = "200";
+  weightInput.placeholder = "—";
+  weightInput.value = state._targetWeightKg || "";
+  weightInput.addEventListener("input", () => {
+    state._targetWeightKg = weightInput.value ? parseFloat(weightInput.value) : null;
+    savePrefs();
+  });
+  weightLabel.append(weightInput);
+  pForm.append(weightLabel);
+
+  pCard.append(pForm);
+  grid.append(pCard);
+
   view.append(grid);
   view.append(renderPreferences());
   return view;
@@ -2065,71 +2098,47 @@ function render() {
   const view = $("#view");
   view.innerHTML = "";
 
-  // Handle legacy redirect params
-  if (state.tab === "sync") {
-    const params = new URLSearchParams(location.search);
-    if (params.get("withings_auth") === "success") {
-      state.tab = "config";
-      state.subRoute = "settings";
-      history.replaceState({}, "", "/config");
-      // Re-apply tab-link active
-      $$(".tab-link").forEach((el) =>
-        el.classList.toggle("active", el.dataset.tab === "config")
-      );
-      const ind = $("#page-indicator");
-      if (ind) ind.textContent = "Réglages";
-    }
+  // Handle withings OAuth redirect
+  const params = new URLSearchParams(location.search);
+  if (params.get("withings_auth") === "success") {
+    state.page = "settings";
+    history.replaceState({}, "", "/reglages");
+    $$("[data-route]").forEach((el) =>
+      el.classList.toggle("active", el.dataset.route === "settings")
+    );
+    // Fall through to render settings
   }
 
-  if (state.tab === "config") {
-    const wrap = document.createElement("div");
-    wrap.className = "secondary-page";
+  const page = state.page || "dashboard";
 
-    // Sub-nav for config tab
-    const subnav = renderSubNav("config");
-    if (subnav) wrap.append(subnav);
-
-    switch (state.subRoute) {
-      case "logs":
-        wrap.append(renderLogs());
-        break;
-      default:
-        wrap.append(renderReglages());
-        break;
-    }
-    view.append(wrap);
-  } else {
-    // Sync tab
-    const subnav = renderSubNav("sync");
-    if (subnav) view.append(subnav);
-
-    switch (state.subRoute) {
-      case "history":
-        view.append(renderHistorique());
-        break;
-      case "stats":
-        view.append(renderStats());
-        break;
-      default:
-        view.append(renderDashboard());
-        break;
-    }
+  switch (page) {
+    case "history":
+      view.append(renderHistorique());
+      break;
+    case "stats":
+      view.append(renderStats());
+      break;
+    case "settings":
+      view.append(renderReglages());
+      break;
+    case "logs":
+      view.append(renderLogs());
+      break;
+    default:
+      view.append(renderDashboard());
+      break;
   }
 }
 
 /* ── SPA click handler ───────────────────────────────────────── */
 
 document.addEventListener("click", (event) => {
-  // Tab link (data-tab)
-  const tabLink = event.target.closest("[data-tab]");
-  if (tabLink) {
+  const routeLink = event.target.closest("[data-route]");
+  if (routeLink) {
     event.preventDefault();
-    const tab = tabLink.dataset.tab;
-    const route = tab === "config" ? "config" : "sync";
-    setRoute(route);
+    setRoute(routeLink.dataset.route);
     return;
   }
-  // Sub-nav link (data-sub) — handled inline via addEventListener
 });
 
 window.addEventListener("popstate", () => setRoute(routeFromPath(), false));
@@ -2226,7 +2235,7 @@ function renderStats() {
   return view;
 }
 
-/* ── Preferences panel (Config tab) ─────────────────────────────── */
+/* ── Preferences panel ──────────────────────────────────────────── */
 
 function renderPreferences() {
   const card = document.createElement("div");
@@ -2297,7 +2306,10 @@ function renderPreferences() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const prefs = JSON.parse(raw);
-      storageRow.textContent = `Préférences sauvegardées : période ${prefs._periodDays || 1}j`;
+      const parts = [`période ${prefs._periodDays || 1}j`];
+      if (prefs._heightCm) parts.push(`taille ${prefs._heightCm}cm`);
+      if (prefs._targetWeightKg) parts.push(`objectif ${prefs._targetWeightKg}kg`);
+      storageRow.textContent = `Préférences : ${parts.join(" · ")}`;
     } else {
       storageRow.textContent = "Aucune préférence sauvegardée.";
     }
@@ -2338,6 +2350,8 @@ function savePrefs() {
   try {
     const prefs = {
       _periodDays: state._periodDays,
+      _heightCm: state._heightCm,
+      _targetWeightKg: state._targetWeightKg,
       theme: document.documentElement.getAttribute("data-theme"),
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs));
@@ -2350,6 +2364,8 @@ function loadPrefs() {
     if (!raw) return;
     const prefs = JSON.parse(raw);
     if (prefs._periodDays != null) state._periodDays = prefs._periodDays;
+    if (prefs._heightCm != null) state._heightCm = prefs._heightCm;
+    if (prefs._targetWeightKg != null) state._targetWeightKg = prefs._targetWeightKg;
     if (prefs.theme) document.documentElement.setAttribute("data-theme", prefs.theme);
   } catch {}
 }
@@ -2367,14 +2383,13 @@ function loadPrefs() {
   setRoute(initialRoute, false);
 
   // Load dashboard data in background
-  const [tab, sub] = initialRoute.split("/");
-  if (tab === "sync" || location.pathname === "/") {
+  if (state.page === "dashboard") {
     loadDashboardData();
   }
 
-  // Auto-refresh every 30s on sync tab
+  // Auto-refresh every 30s on dashboard
   setInterval(() => {
-    if (state.tab === "sync" && state.subRoute === "dashboard") {
+    if (state.page === "dashboard") {
       loadDashboardData();
     }
   }, 30000);

@@ -63,7 +63,7 @@ body {
 }
 
 .nav { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.nav a, .tab-link {
+.nav a {
   color: var(--muted);
   text-decoration: none;
   padding: 10px 13px;
@@ -72,51 +72,10 @@ body {
   font-weight: 700;
   font-size: 14px;
   cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
 }
-.nav a.active, .tab-link.active, .nav a:hover, .tab-link:hover { color: var(--text); border-color: var(--line); background: var(--panel); }
-.nav .tab-link.active { color: var(--green); border-color: rgba(140,255,181,.32); background: rgba(140,255,181,.08); }
-
-.page-indicator {
-  margin-left: auto;
-  font-size: 12px;
-  color: var(--muted);
-  background: var(--panel);
-  padding: 5px 12px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  white-space: nowrap;
-}
-
-/* ── Sub-navigation pills ────────────────────────────────────────── */
-.subnav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 20px;
-  padding: 4px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--panel);
-  width: fit-content;
-}
-.subnav a {
-  color: var(--muted);
-  text-decoration: none;
-  padding: 8px 16px;
-  border-radius: 999px;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: background .15s, color .15s;
-}
-.subnav a.active {
-  background: rgba(140,255,181,.12);
-  color: var(--green);
-}
-.subnav a:hover:not(.active) {
-  color: var(--text);
-  background: var(--panel-strong);
-}
+.nav a.active { color: var(--green); border-color: rgba(140,255,181,.32); background: rgba(140,255,181,.08); }
+.nav a:hover:not(.active) { color: var(--text); border-color: var(--line); background: var(--panel); }
 
 .hero {
   display: grid;
