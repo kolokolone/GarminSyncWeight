@@ -29,8 +29,8 @@ def test_local_admin_root_serves_frontend() -> None:
     client = TestClient(app)
     response = client.get("/")
     assert response.status_code == 200
-    assert "GarminSyncWeight Admin" in response.text
-    assert "Connecte Withings et Garmin" in response.text
+    assert "GarminSyncWeight" in response.text
+    assert "Tableau de bord" in response.text
 
 
 def test_frontend_routes_fallback_to_admin() -> None:
@@ -38,7 +38,7 @@ def test_frontend_routes_fallback_to_admin() -> None:
     client = TestClient(app)
     response = client.get("/garmin")
     assert response.status_code == 200
-    assert "GarminSyncWeight Admin" in response.text
+    assert "GarminSyncWeight" in response.text
 
 
 def test_withings_start_unconfigured_redirects_to_admin(tmp_path: Path) -> None:

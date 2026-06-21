@@ -101,7 +101,10 @@ class TestGarminWriteMethod:
 
     def test_add_weigh_in_with_timestamps_when_weight_and_measured_at(self) -> None:
         """With weight and measured_at_local but no composition → add_weigh_in_with_timestamps."""
-        c = _candidate(percent_fat=None, muscle_mass=None, bone_mass=None, bmi=None)
+        c = _candidate(
+            percent_fat=None, muscle_mass=None, bone_mass=None, bmi=None,
+            measured_at_local=datetime(2026, 6, 21, 14, 30),
+        )
         assert c.garmin_write_method() == "add_weigh_in_with_timestamps"
 
     def test_add_weigh_in_when_weight_only(self) -> None:
