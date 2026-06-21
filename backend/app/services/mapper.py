@@ -112,15 +112,25 @@ class WithingsToGarminMapper:
             if self._settings.user_height_m is not None:
                 warnings.append("BMI could not be calculated — check weight/height")
 
-        # ── Hydration percent (explicitly null — no auto-conversion) ─
+        # ── Hydration percent (convert kg → %) ─────────────────
         percent_hydration: Decimal | None = None
-        if measurement.hydration_mass_kg is not None:
+        if (
+            measurement.hydration_mass_kg is not None
+            and measurement.weight_kg is not None
+            and measurement.weight_kg > 0
+        ):
+            pct = (measurement.hydration_mass_kg / measurement.weight_kg) * Decimal("100")
+            percent_hydration = pct.quantize(Decimal("0.1"))
+            mapped["percent_hydration"] = float(percent_hydration)
+        elif measurement.hydration_mass_kg is not None:
             ignored["hydration_mass_kg"] = float(measurement.hydration_mass_kg)
             warnings.append(
-                "Hydration provided in kg, not mapped to percent_hydration — "
-                "conversion formula not validated. Set to null."
+                "Hydration mass available but weight missing — "
+                "cannot compute percent_hydration."
             )
-        null_fields.append("percent_hydration")
+            null_fields.append("percent_hydration")
+        else:
+            null_fields.append("percent_hydration")
 
         basal_met = None
         if measurement.basal_met is not None:

@@ -71,7 +71,6 @@ def _build_field_mapping(
 ) -> list[FieldMappingEntry]:
     """Build the field mapping table from a measurement and its candidate."""
     mapping: list[FieldMappingEntry] = []
-    ignored_reason = "Ignoré volontairement : conversion Withings kg vers Garmin % non validée"
 
     def _row(label, wval, gval, status, msg):
         """One row of the field mapping."""
@@ -126,17 +125,29 @@ def _build_field_mapping(
             )
         )
 
-    # Hydration is explicitly ignored
+    # Hydration
     if measurement.hydration_mass_kg is not None:
-        mapping.append(
-            FieldMappingEntry(
-                label="Hydratation",
-                withings_value=_fmt_val(measurement.hydration_mass_kg, "kg"),
-                garmin_value=None,
-                status="ignored",
-                message=ignored_reason,
+        if measurement.weight_kg is not None and measurement.weight_kg > 0:
+            pct = (measurement.hydration_mass_kg / measurement.weight_kg) * 100
+            mapping.append(
+                FieldMappingEntry(
+                    label="Hydratation",
+                    withings_value=_fmt_val(round(pct, 1), "%"),
+                    garmin_value=_fmt_val(round(pct, 1), "%"),
+                    status="calculated",
+                    message="Calculé (masse eau / poids)",
+                )
             )
-        )
+        else:
+            mapping.append(
+                FieldMappingEntry(
+                    label="Hydratation",
+                    withings_value=_fmt_val(measurement.hydration_mass_kg, "kg"),
+                    garmin_value=None,
+                    status="ignored",
+                    message="Poids manquant, conversion kg→% impossible",
+                )
+            )
 
     # Fields from candidate warnings / ignored
     if candidate:

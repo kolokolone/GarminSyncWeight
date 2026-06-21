@@ -64,13 +64,22 @@ def test_mapping_bone_mass(mapper) -> None:
     assert candidate.bone_mass == Decimal("2.8")
 
 
-def test_hydration_mass_not_mapped_to_percent_by_default(mapper) -> None:
-    """Type 77 hydration must NOT be auto-converted to percent_hydration."""
+def test_hydration_mass_converted_to_percent(mapper) -> None:
+    """Type 77 hydration mass (kg) is converted to percent_hydration."""
     m = _make_measurement(hydration_mass_kg=Decimal("42.0"))
+    candidate = mapper.map(m)
+    expected = (Decimal("42.0") / Decimal("78.5") * 100).quantize(Decimal("0.1"))
+    assert candidate.percent_hydration == expected
+    assert "percent_hydration" in candidate.mapped_fields
+    assert "hydration_mass_kg" not in candidate.ignored_fields
+
+
+def test_hydration_needs_weight(mapper) -> None:
+    """percent_hydration stays null if weight is missing."""
+    m = _make_measurement(weight_kg=None, hydration_mass_kg=Decimal("42.0"))
     candidate = mapper.map(m)
     assert candidate.percent_hydration is None
     assert "percent_hydration" in candidate.null_fields
-    assert "hydration_mass_kg" in candidate.ignored_fields
 
 
 def test_bmi_null_without_height(mapper_no_height) -> None:
