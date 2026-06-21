@@ -2,7 +2,7 @@
 
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # ── Sync event status constants ──────────────────────────────────
 
@@ -113,3 +113,63 @@ class LogResult(BaseModel):
     service: str
     lines: list[str]
     truncated: bool = False
+
+
+# ── Measurement preview models ────────────────────────────────────
+
+
+class FieldMappingEntry(BaseModel):
+    """One row in the Withings→Garmin field mapping table."""
+
+    label: str
+    withings_value: str | None = None
+    garmin_value: str | None = None
+    status: str = "unknown"  # will_sync | calculated | ignored | absent | conflict | unsupported
+    message: str = ""
+
+
+class DedupPreview(BaseModel):
+    """Deduplication preview for a measurement."""
+
+    status: str = "unknown"  # new | duplicate | conflict | unchecked
+    message: str = ""
+
+
+class DecisionPreview(BaseModel):
+    """Sync decision preview."""
+
+    status: str = "unknown"
+    can_sync: bool = False
+    message: str = ""
+
+
+class MeasurementPreviewResponse(BaseModel):
+    """Read-only preview of the latest Withings measurement and its Garmin mapping.
+
+    This endpoint NEVER writes to Garmin. It is a pure read-only preview.
+    """
+
+    status: str = "error"  # ready | withings_not_connected | garmin_not_ready | no_measurement | error
+    withings: dict[str, Any] = {}
+    garmin: dict[str, Any] = {}
+    latest_measurement: dict[str, Any] | None = None
+    garmin_payload_preview: dict[str, Any] | None = None
+    field_mapping: list[FieldMappingEntry] = []
+    deduplication: DedupPreview = DedupPreview()
+    decision: DecisionPreview = DecisionPreview()
+    warnings: list[str] = []
+    technical: dict[str, Any] = {}
+
+
+class RecentMeasurementItem(BaseModel):
+    """One item in the /api/measurements/recent response."""
+
+    measured_at: str = ""
+    weight_kg: float | None = None
+    fat_percent: float | None = None
+
+
+class RecentMeasurementsResponse(BaseModel):
+    """Response from GET /api/measurements/recent."""
+
+    items: list[RecentMeasurementItem] = []

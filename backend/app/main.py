@@ -9,7 +9,14 @@ Usage:
 
 from pathlib import Path
 
-from app.api import routes_auth, routes_garmin_auth, routes_logs, routes_status, routes_sync
+from app.api import (
+    routes_auth,
+    routes_garmin_auth,
+    routes_logs,
+    routes_measurements,
+    routes_status,
+    routes_sync,
+)
 from app.config import get_settings
 from app.logging_config import setup_logging
 from fastapi import FastAPI, HTTPException
@@ -52,6 +59,7 @@ def create_app() -> FastAPI:
     app.include_router(routes_garmin_auth.router)
     app.include_router(routes_sync.router)
     app.include_router(routes_logs.router)
+    app.include_router(routes_measurements.router)
 
     frontend_dir = Path(__file__).resolve().parents[2] / "frontend" / "out"
     assets_dir = frontend_dir / "assets"
