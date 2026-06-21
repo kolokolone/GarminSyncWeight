@@ -7,11 +7,15 @@ for the Dashboard UI.
 
 from datetime import UTC, datetime, timedelta
 
+from app.cache import get_cache
 from app.config import Settings, get_settings
 from app.models.sync import (
     DecisionPreview,
     DedupPreview,
     FieldMappingEntry,
+    HistoryMeasurementItem,
+    HistoryMeasurementsResponse,
+    HistoryMeasurementsSummary,
     MeasurementPreviewResponse,
     RecentMeasurementItem,
     RecentMeasurementsResponse,
@@ -25,8 +29,6 @@ from app.services.withings_parser import WithingsParser
 from app.storage.sync_store import SyncStore
 from app.storage.token_store import TokenStore
 from fastapi import APIRouter, Depends, HTTPException, Query
-
-router = APIRouter(prefix="/api/measurements", tags=["measurements"])
 
 
 def _build_services(settings: Settings) -> tuple:
@@ -155,7 +157,15 @@ async def get_latest_measurement_preview(
     """Preview the latest Withings measurement and its planned Garmin mapping.
 
     This is a READ-ONLY endpoint. It NEVER writes to Garmin.
+
+    Results are cached for 30 seconds to avoid redundant API calls.
     """
+    cache = get_cache()
+    cache_key = f"latest:{days}"
+    cached_val = cache.get(cache_key)
+    if cached_val is not None:
+        return cached_val
+
     auth, wclient, parser, mapper, garmin, dedup, sync_store = _build_services(settings)
 
     # ── Check Withings ──────────────────────────────────────────
@@ -304,7 +314,7 @@ async def get_latest_measurement_preview(
         decision_msg = "Non vérifié."
         can_sync = False
 
-    return MeasurementPreviewResponse(
+    result = MeasurementPreviewResponse(
         status="ready",
         withings={
             "connected": True,
@@ -330,6 +340,11 @@ async def get_latest_measurement_preview(
         warnings=warnings,
         technical={"lookback_days": days},
     )
+
+    # Cache the successful response (30s TTL)
+    cache.set(cache_key, result)
+
+    return result
 
 
 @router.get("/recent", response_model=RecentMeasurementsResponse)
@@ -374,3 +389,162 @@ async def get_recent_measurements(
     ]
 
     return RecentMeasurementsResponse(items=items)
+
+
+@router.get("/history", response_model=HistoryMeasurementsResponse)
+async def get_measurement_history(
+    days: int = Query(default=30, ge=1, le=365),
+    include_garmin_status: bool = Query(default=True),
+    settings: Settings = Depends(get_settings),
+) -> HistoryMeasurementsResponse:
+    """Return Withings measurements enriched with Garmin sync status.
+
+    This endpoint fetches Withings measurements for the given period,
+    maps them to Garmin candidates, then checks each against existing
+    Garmin data (weigh-ins + body composition) and local sync history
+    to determine real Garmin status.
+
+    This is a READ-ONLY endpoint. It NEVER writes to Garmin.
+    """
+    auth, wclient, parser, mapper, garmin, dedup, sync_store = _build_services(settings)
+
+    withings_status = await auth.check_connection()
+    if not withings_status.get("connected"):
+        raise HTTPException(status_code=400, detail="Withings non connecté.")
+
+    end_dt = datetime.now(UTC)
+    start_dt = end_dt - timedelta(days=days)
+
+    # ── Fetch Withings measurements ─────────────────────────────
+    try:
+        raw_groups = await wclient.get_measurements(start_dt, end_dt)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Erreur de récupération des mesures Withings : {exc}",
+        ) from exc
+
+    parsed = parser.parse_measure_groups(raw_groups)
+    if not parsed:
+        return HistoryMeasurementsResponse(
+            items=[],
+            summary=HistoryMeasurementsSummary(
+                count=0, checked_at=datetime.now(UTC).isoformat(),
+            ),
+        )
+
+    # Sort descending: most recent first
+    sorted_parsed = sorted(parsed, key=lambda m: m.measured_at_utc, reverse=True)
+
+    # ── Map all to Garmin candidates ────────────────────────────
+    candidates = []
+    for m in sorted_parsed:
+        try:
+            c = mapper.map(m)
+            candidates.append((m, c))
+        except Exception:
+            candidates.append((m, None))
+
+    # ── Fetch Garmin data once (whole window) ───────────────────
+    garmin_weigh_ins: list = []
+    garmin_bc: list = []
+    garmin_available = False
+    if include_garmin_status:
+        try:
+            garmin_status_check = await garmin.check_connection()
+            garmin_available = garmin_status_check.get("connected", False)
+            if garmin_available:
+                search_start = sorted_parsed[-1].garmin_date - timedelta(days=1)
+                search_end = sorted_parsed[0].garmin_date + timedelta(days=1)
+                current = search_start
+                while current <= search_end:
+                    garmin_weigh_ins.extend(await garmin.get_daily_weigh_ins(current))
+                    current += timedelta(days=1)
+                garmin_bc = await garmin.get_body_composition(search_start, search_end)
+        except Exception:
+            garmin_available = False
+
+    # ── Build enriched items ────────────────────────────────────
+    now_str = datetime.now(UTC).isoformat()
+    items: list[HistoryMeasurementItem] = []
+    counts = {"new": 0, "already_synced": 0, "conflict": 0, "failed": 0}
+
+    for measurement, candidate in candidates:
+        item = HistoryMeasurementItem(
+            measured_at_local=(
+                measurement.measured_at_local.isoformat()
+                if measurement.measured_at_local else ""
+            ),
+            date=measurement.garmin_date.isoformat(),
+            weight_kg=float(measurement.weight_kg) if measurement.weight_kg else None,
+            fat_percent=float(measurement.fat_percent) if measurement.fat_percent else None,
+            source_measure_group_id=measurement.source_measure_group_id,
+            garmin_status="unchecked",
+            decision="unchecked",
+        )
+
+        if candidate and garmin_available:
+            dedup_status = dedup.classify(candidate, garmin_weigh_ins, garmin_bc)
+
+            # Map dedup_status → garmin_status
+            status_map = {
+                "new_candidate": "new",
+                "duplicate_exact_or_near": "already_present",
+                "duplicate_body_composition": "already_present",
+                "possible_duplicate": "possible_duplicate",
+                "conflict_same_day": "conflict_same_day",
+                "already_synced_by_garminsync": "already_synced_by_garminsync",
+                "invalid_missing_weight": "failed",
+                "invalid_outlier": "failed",
+            }
+            item.garmin_status = status_map.get(dedup_status, "unchecked")
+
+            # Map dedup_status → decision
+            duplicate_decisions = (
+                "duplicate_exact_or_near", "duplicate_body_composition",
+                "already_synced_by_garminsync",
+            )
+            conflict_decisions = ("possible_duplicate", "conflict_same_day")
+            invalid_decisions = ("invalid_missing_weight", "invalid_outlier")
+
+            if dedup_status == "new_candidate":
+                item.decision = "ready_to_sync"
+                counts["new"] += 1
+            elif dedup_status in duplicate_decisions:
+                item.decision = "already_synced"
+                counts["already_synced"] += 1
+            elif dedup_status in conflict_decisions:
+                item.decision = "conflict"
+                counts["conflict"] += 1
+            elif dedup_status in invalid_decisions:
+                item.decision = "failed"
+                counts["failed"] += 1
+            else:
+                item.decision = "unchecked"
+
+            # Check sync store for actual sync events
+            if candidate.idempotency_key:
+                event = sync_store.get_event_by_key(candidate.idempotency_key)
+                if event:
+                    item.sync_event_status = event.get("status")
+                    item.last_error = event.get("error_message")
+
+            item.warning_count = len(candidate.mapping_warnings or [])
+
+        elif candidate and not garmin_available:
+            item.garmin_status = "unchecked"
+            item.decision = "unchecked"
+
+        items.append(item)
+
+    return HistoryMeasurementsResponse(
+        items=items,
+        summary=HistoryMeasurementsSummary(
+            count=len(items),
+            new_count=counts["new"],
+            already_synced_count=counts["already_synced"],
+            conflict_count=counts["conflict"],
+            failed_count=counts["failed"],
+            checked_at=now_str,
+        ),
+    )

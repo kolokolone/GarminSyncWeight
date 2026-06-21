@@ -174,3 +174,36 @@ class RecentMeasurementsResponse(BaseModel):
     """Response from GET /api/measurements/recent."""
 
     items: list[RecentMeasurementItem] = []
+
+
+class HistoryMeasurementItem(BaseModel):
+    """One item in the /api/measurements/history response with Garmin status."""
+
+    measured_at_local: str = ""
+    date: str = ""
+    weight_kg: float | None = None
+    fat_percent: float | None = None
+    source_measure_group_id: str | None = None
+    garmin_status: str = "unchecked"
+    decision: str = "unchecked"
+    sync_event_status: str | None = None
+    last_error: str | None = None
+    warning_count: int = 0
+
+
+class HistoryMeasurementsSummary(BaseModel):
+    """Summary of history query."""
+
+    count: int = 0
+    new_count: int = 0
+    already_synced_count: int = 0
+    conflict_count: int = 0
+    failed_count: int = 0
+    checked_at: str = ""
+
+
+class HistoryMeasurementsResponse(BaseModel):
+    """Response from GET /api/measurements/history."""
+
+    items: list[HistoryMeasurementItem] = []
+    summary: HistoryMeasurementsSummary = HistoryMeasurementsSummary()

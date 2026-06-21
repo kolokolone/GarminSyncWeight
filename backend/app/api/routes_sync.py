@@ -1,5 +1,6 @@
 """Controlled synchronization routes."""
 
+from app.cache import get_cache
 from app.config import Settings, get_settings
 from app.models.sync import SyncReport
 from app.services.deduplicator import Deduplicator
@@ -47,11 +48,14 @@ async def run_sync(
     """Run the guarded Withings→Garmin synchronization."""
     engine = _build_engine(settings)
     try:
-        return await engine.run_sync(
+        report = await engine.run_sync(
             start_date=body.start_date,
             end_date=body.end_date,
             tz_name=body.timezone,
         )
+        # Invalidate cache after successful sync so next read is fresh
+        get_cache().invalidate_all()
+        return report
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
