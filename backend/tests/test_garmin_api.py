@@ -9,12 +9,9 @@ Covers:
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any
 
-import pytest
 from app.models.garmin import GarminBodyCompositionCandidate
 from app.models.sync import SyncSummary
-
 
 # ── Helpers ───────────────────────────────────────────────────────
 
@@ -136,7 +133,9 @@ class TestWarningsCountAggregation:
         from app.models.sync import SyncCandidate
 
         candidates = [
-            SyncCandidate(date="2026-06-21", warnings=["warning A", "warning B"], decision="synced"),
+            SyncCandidate(
+                date="2026-06-21", warnings=["warning A", "warning B"], decision="synced",
+            ),
             SyncCandidate(date="2026-06-22", warnings=["warning C"], decision="synced"),
             SyncCandidate(date="2026-06-23", warnings=[], decision="skipped_existing"),
         ]
@@ -182,8 +181,8 @@ class TestGarminClientWrapper:
             measured_at_local=datetime(2026, 6, 21, 14, 30),
         )
         params = c.garmin_params()
-        # params should be: {"timestamp": "2026-06-21T14:30:00", "weight": 78.5, "percent_fat": 22.0, ...}
+        # params: {"timestamp": "2026-06-21T14:30:00", "weight": 78.5, ...}
         assert "timestamp" in params
         assert params["timestamp"] == "2026-06-21T14:30:00"
         assert params["weight"] == 78.5
-        # The garminconnnect library will receive: add_body_composition("2026-06-21T14:30:00", 78.5, percent_fat=22.0, ...)
+        # garminconnect gets: add_body_composition("2026-06-21T14:30:00", 78.5, ...)

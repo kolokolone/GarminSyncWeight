@@ -96,7 +96,12 @@ class SyncEngine:
                 end_day + timedelta(days=self._settings.garmin_lookahead_days),
             )
             if progress_callback:
-                progress_callback(json.dumps({"type": "garmin_fetched", "weigh_ins": len(garmin_weigh_ins), "body_comp": len(garmin_bc)}))
+                cb_payload = json.dumps({
+                    "type": "garmin_fetched",
+                    "weigh_ins": len(garmin_weigh_ins),
+                    "body_comp": len(garmin_bc),
+                })
+                progress_callback(cb_payload)
 
             report_candidates: list[SyncCandidate] = []
             summary = SyncSummary(
@@ -120,7 +125,9 @@ class SyncEngine:
                         "index": i + 1,
                         "total": len(candidates),
                         "date": item.date,
-                        "weight_kg": item.mapped_fields.get("weight") if item.mapped_fields else None,
+                        "weight_kg": item.mapped_fields.get("weight")
+                        if item.mapped_fields
+                        else None,
                         "decision": item.decision,
                         "reason": item.reason,
                     }))

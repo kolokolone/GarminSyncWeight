@@ -91,7 +91,9 @@ def list_reports(settings: Settings = Depends(get_settings)) -> list[dict]:
 
 # ── SSE streaming endpoint ──────────────────────────────────────
 
-async def _sse_sync_generator(start_date: str, end_date: str, tz_name: str | None, settings: Settings):
+async def _sse_sync_generator(
+    start_date: str, end_date: str, tz_name: str | None, settings: Settings,
+):
     """Async generator that runs sync and yields SSE `data:` lines."""
     engine = _build_engine(settings)
     lines: list[str] = []
@@ -108,13 +110,15 @@ async def _sse_sync_generator(start_date: str, end_date: str, tz_name: str | Non
         )
         # After streaming, send the full report as a final event
         import json
-        lines.append(f"data: {json.dumps({'type': 'report', 'report': report.model_dump(mode='json')})}\n\n")
+        payload = json.dumps({"type": "report", "report": report.model_dump(mode="json")})
+        lines.append(f"data: {payload}\n\n")
     except ValueError as exc:
         lines.append(f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n")
     except RuntimeError as exc:
         lines.append(f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n")
     except Exception as exc:
-        lines.append(f"data: {json.dumps({'type': 'error', 'message': f'Erreur interne: {exc}'})}\n\n")
+        err = json.dumps({"type": "error", "message": f"Erreur interne: {exc}"})
+        lines.append(f"data: {err}\n\n")
     finally:
         # Invalidate cache after sync attempt
         get_cache().invalidate_all()
