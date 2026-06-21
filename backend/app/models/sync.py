@@ -2,7 +2,7 @@
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 # ── Sync event status constants ──────────────────────────────────
 
@@ -149,7 +149,8 @@ class MeasurementPreviewResponse(BaseModel):
     This endpoint NEVER writes to Garmin. It is a pure read-only preview.
     """
 
-    status: str = "error"  # ready | withings_not_connected | garmin_not_ready | no_measurement | error
+    # ready | withings_not_connected | garmin_not_ready | no_measurement | error
+    status: str = "error"
     withings: dict[str, Any] = {}
     garmin: dict[str, Any] = {}
     latest_measurement: dict[str, Any] | None = None

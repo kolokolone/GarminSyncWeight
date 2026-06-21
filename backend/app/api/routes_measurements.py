@@ -17,7 +17,6 @@ from app.models.sync import (
     RecentMeasurementsResponse,
 )
 from app.services.deduplicator import Deduplicator
-from app.services.garmin_auth_service import GarminAuthService
 from app.services.garmin_client import GarminClient
 from app.services.mapper import WithingsToGarminMapper
 from app.services.withings_auth import WithingsAuthService
@@ -46,10 +45,7 @@ def _fmt_val(value, unit: str = "") -> str | None:
     """Format a numeric value for display."""
     if value is None:
         return None
-    if isinstance(value, float):
-        s = f"{value:.1f}"
-    else:
-        s = str(value)
+    s = f"{value:.1f}" if isinstance(value, float) else str(value)
     return f"{s} {unit}".strip() if unit else s
 
 
@@ -70,16 +66,43 @@ def _build_field_mapping(
     mapping: list[FieldMappingEntry] = []
     ignored_reason = "Ignoré volontairement : conversion Withings kg vers Garmin % non validée"
 
+    def _row(label, wval, gval, status, msg):
+        """One row of the field mapping."""
+        return (label, wval, gval, status, msg)
+
+    def _sync_status(val, cond):
+        """'will_sync' if cond else 'absent'."""
+        return "will_sync" if cond else "absent"
+
+    c = candidate
     fields = [
-        ("Date", _fmt_dt(measurement.measured_at_local), candidate.date.isoformat() if candidate else None, "will_sync" if candidate else "absent", ""),
-        ("Poids", _fmt_val(measurement.weight_kg, "kg"), _fmt_val(candidate.weight, "kg") if candidate else None, "will_sync" if candidate and candidate.weight else "absent", ""),
-        ("Masse grasse", _fmt_val(measurement.fat_percent, "%"), _fmt_val(candidate.percent_fat, "%") if candidate else None, "will_sync" if candidate and candidate.percent_fat else "absent", ""),
-        ("Masse musculaire", _fmt_val(measurement.muscle_mass_kg, "kg"), _fmt_val(candidate.muscle_mass, "kg") if candidate else None, "will_sync" if candidate and candidate.muscle_mass else "absent", ""),
-        ("Masse osseuse", _fmt_val(measurement.bone_mass_kg, "kg"), _fmt_val(candidate.bone_mass, "kg") if candidate else None, "will_sync" if candidate and candidate.bone_mass else "absent", ""),
-        ("IMC", _fmt_val(measurement.bmi), _fmt_val(candidate.bmi) if candidate else None, "will_sync" if candidate and candidate.bmi else "absent", ""),
-        ("Métabolisme basal", _fmt_val(measurement.basal_met, "kcal"), _fmt_val(candidate.basal_met, "kcal") if candidate else None, "will_sync" if candidate and candidate.basal_met else "absent", ""),
-        ("Âge métabolique", _fmt_val(measurement.metabolic_age, "ans"), _fmt_val(candidate.metabolic_age, "ans") if candidate else None, "will_sync" if candidate and candidate.metabolic_age else "absent", ""),
-        ("Graisse viscérale", _fmt_val(measurement.visceral_fat_rating), _fmt_val(candidate.visceral_fat_rating) if candidate else None, "will_sync" if candidate and candidate.visceral_fat_rating else "absent", ""),
+        _row("Date", _fmt_dt(measurement.measured_at_local),
+             c.date.isoformat() if c else None,
+             "will_sync" if c else "absent", ""),
+        _row("Poids", _fmt_val(measurement.weight_kg, "kg"),
+             _fmt_val(c.weight, "kg") if c else None,
+             _sync_status(c, c and c.weight), ""),
+        _row("Masse grasse", _fmt_val(measurement.fat_percent, "%"),
+             _fmt_val(c.percent_fat, "%") if c else None,
+             _sync_status(c, c and c.percent_fat), ""),
+        _row("Masse musculaire", _fmt_val(measurement.muscle_mass_kg, "kg"),
+             _fmt_val(c.muscle_mass, "kg") if c else None,
+             _sync_status(c, c and c.muscle_mass), ""),
+        _row("Masse osseuse", _fmt_val(measurement.bone_mass_kg, "kg"),
+             _fmt_val(c.bone_mass, "kg") if c else None,
+             _sync_status(c, c and c.bone_mass), ""),
+        _row("IMC", _fmt_val(measurement.bmi),
+             _fmt_val(c.bmi) if c else None,
+             _sync_status(c, c and c.bmi), ""),
+        _row("Métabolisme basal", _fmt_val(measurement.basal_met, "kcal"),
+             _fmt_val(c.basal_met, "kcal") if c else None,
+             _sync_status(c, c and c.basal_met), ""),
+        _row("Âge métabolique", _fmt_val(measurement.metabolic_age, "ans"),
+             _fmt_val(c.metabolic_age, "ans") if c else None,
+             _sync_status(c, c and c.metabolic_age), ""),
+        _row("Graisse viscérale", _fmt_val(measurement.visceral_fat_rating),
+             _fmt_val(c.visceral_fat_rating) if c else None,
+             _sync_status(c, c and c.visceral_fat_rating), ""),
     ]
 
     for label, withings_val, garmin_val, status, msg in fields:
@@ -241,22 +264,31 @@ async def get_latest_measurement_preview(
                 warnings.append(f"{label} : absent de la mesure Withings")
 
     # Dedup info
-    dedup_disabled = existing_count < 0
     dedup_map = {
-        "new_candidate": ("new", "Aucune mesure Garmin proche détectée pour cette date."),
-        "duplicate_exact_or_near": ("duplicate", "Mesure déjà présente dans Garmin (poids identique)."),
-        "duplicate_body_composition": ("duplicate", "Composition corporelle déjà présente dans Garmin."),
-        "possible_duplicate": ("duplicate", "Mesure Garmin proche détectée à vérifier."),
-        "conflict_same_day": ("conflict", "Mesure Garmin différente le même jour."),
-        "already_synced_by_garminsync": ("duplicate", "Déjà synchronisée via GarminSyncWeight."),
-        "invalid_missing_weight": ("conflict", "Mesure Withings sans poids valide."),
-        "invalid_outlier": ("conflict", "Poids aberrant (hors plage 20-300 kg)."),
+        "new_candidate": ("new",
+            "Aucune mesure Garmin proche détectée pour cette date."),
+        "duplicate_exact_or_near": ("duplicate",
+            "Mesure déjà présente dans Garmin (poids identique)."),
+        "duplicate_body_composition": ("duplicate",
+            "Composition corporelle déjà présente dans Garmin."),
+        "possible_duplicate": ("duplicate",
+            "Mesure Garmin proche détectée à vérifier."),
+        "conflict_same_day": ("conflict",
+            "Mesure Garmin différente le même jour."),
+        "already_synced_by_garminsync": ("duplicate",
+            "Déjà synchronisée via GarminSyncWeight."),
+        "invalid_missing_weight": ("conflict",
+            "Mesure Withings sans poids valide."),
+        "invalid_outlier": ("conflict",
+            "Poids aberrant (hors plage 20-300 kg)."),
     }
     dedup_status_str, dedup_msg = dedup_map.get(dedup_status, ("unchecked", "Non vérifié."))
 
     # Decision
     can_sync = dedup_status == "new_candidate"
-    if dedup_status in ("duplicate_exact_or_near", "duplicate_body_composition", "already_synced_by_garminsync"):
+    duplicate_stati = ("duplicate_exact_or_near", "duplicate_body_composition",
+                       "already_synced_by_garminsync")
+    if dedup_status in duplicate_stati:
         decision_msg = "Cette mesure semble déjà synchronisée."
         can_sync = False
     elif dedup_status in ("possible_duplicate", "conflict_same_day"):
