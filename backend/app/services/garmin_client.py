@@ -117,8 +117,24 @@ class GarminClient:
         return results
 
     async def add_body_composition(self, **kwargs: Any) -> dict[str, Any]:
-        """Write body composition to Garmin Connect using verified parameters."""
-        return self._client().add_body_composition(**kwargs)
+        """Write body composition to Garmin Connect using verified parameters.
+
+        Wraps the raw garminconnect call with logging and safe error
+        propagation so that callers (e.g. sync_engine) can distinguish
+        between API failures and programming errors.
+        """
+        target = kwargs.copy()
+        ts = target.pop("timestamp", None)  # positional first arg
+        weight = target.pop("weight", None)
+        _log().info("add_body_composition: timestamp=%s weight=%s extra=%s", ts, weight, target)
+        try:
+            client = self._client()
+            result = client.add_body_composition(ts, weight, **target)
+            _log().info("add_body_composition succeeded: %s", result)
+            return result  # type: ignore[return-value]
+        except Exception as exc:
+            _log().error("add_body_composition failed: %s | kwargs=%s", exc, kwargs)
+            raise
 
     async def add_weigh_in_with_timestamps(self, **kwargs: Any) -> dict[str, Any]:
         """Write weigh-in with timestamps to Garmin Connect."""

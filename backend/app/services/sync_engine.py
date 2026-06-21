@@ -102,6 +102,8 @@ class SyncEngine:
                 )
                 report_candidates.append(item)
 
+            summary.warnings_count = sum(len(c.warnings) for c in report_candidates)
+
             report = SyncReport(
                 period={"start_date": start_date, "end_date": end_date, "timezone": str(tz)},
                 prerequisites=prerequisites,
@@ -189,7 +191,6 @@ class SyncEngine:
             return self._candidate_report(candidate, status, decision, reason)
 
         garmin_params = candidate.garmin_params()
-        garmin_params["date"] = candidate.date.isoformat()
         try:
             response = await self._garmin.add_body_composition(**garmin_params)
             summary.synced_count += 1

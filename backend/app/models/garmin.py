@@ -130,7 +130,8 @@ class GarminBodyCompositionCandidate(BaseModel):
     def garmin_params(self) -> dict[str, object]:
         """Return the parameters that would be passed to the Garmin API."""
         weight_val = float(self.weight) if self.weight else 0.0
-        base: dict[str, object] = {"date": self.date.isoformat(), "weight": weight_val}
+        ts = self.measured_at_local.isoformat() if self.measured_at_local else self.date.isoformat()
+        base: dict[str, object] = {"timestamp": ts, "weight": weight_val}
         if self.garmin_write_method() == "add_body_composition":
             def _f(v: object) -> float | None:
                 return float(v) if v is not None else None
