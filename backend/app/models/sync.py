@@ -1,4 +1,4 @@
-"""Pydantic models for sync pipeline status, reports, and events."""
+"""Pydantic models for the controlled sync pipeline."""
 
 from typing import Any, Literal
 
@@ -19,16 +19,11 @@ DedupStatus = Literal[
 ]
 
 SyncEventStatus = Literal[
-    "dry_run_new_candidate",
-    "dry_run_duplicate",
-    "dry_run_possible_duplicate",
-    "dry_run_conflict",
-    "dry_run_invalid",
-    "written",
-    "skipped_duplicate",
+    "synced",
+    "skipped_existing",
     "skipped_conflict",
-    "skipped_invalid",
-    "write_failed",
+    "failed",
+    "invalid",
 ]
 
 GarminWriteMethod = Literal[
@@ -36,11 +31,11 @@ GarminWriteMethod = Literal[
 ]
 
 
-# ── Dry-run report models ────────────────────────────────────────
+# ── Sync report models ───────────────────────────────────────────
 
 
-class DryRunCandidate(BaseModel):
-    """One candidate in a dry-run report."""
+class SyncCandidate(BaseModel):
+    """One candidate in a controlled sync report."""
 
     date: str
     measured_at_local: str | None = None
@@ -50,31 +45,39 @@ class DryRunCandidate(BaseModel):
     null_fields: list[str] = []
     warnings: list[str] = []
     dedup_status: str = "unknown"
-    decision: Literal["would_write", "skip"] = "skip"
+    decision: SyncEventStatus = "invalid"
+    reason: str = ""
     garmin_call: dict[str, Any] = {}
+    garmin_response: dict[str, Any] | None = None
+    error_message: str | None = None
     idempotency_key: str = ""
 
 
-class DryRunSummary(BaseModel):
-    """Summary statistics for a dry-run report."""
+class SyncSummary(BaseModel):
+    """Summary statistics for a controlled sync report."""
 
-    would_write_count: int = 0
-    skipped_duplicates_count: int = 0
-    possible_duplicates_count: int = 0
+    withings_raw_count: int = 0
+    withings_parsed_count: int = 0
+    garmin_existing_count: int = 0
+    candidates_count: int = 0
+    synced_count: int = 0
+    skipped_existing_count: int = 0
     conflicts_count: int = 0
     invalid_count: int = 0
+    failed_count: int = 0
     warnings_count: int = 0
 
 
-class DryRunReport(BaseModel):
-    """Complete dry-run report."""
+class SyncReport(BaseModel):
+    """Complete controlled sync report."""
 
-    mode: str = "dry_run"
+    mode: str = "sync"
     period: dict[str, str] = {}
+    prerequisites: dict[str, Any] = {}
     withings: dict[str, Any] = {}
     garmin: dict[str, Any] = {}
-    candidates: list[DryRunCandidate] = []
-    summary: DryRunSummary = DryRunSummary()
+    candidates: list[SyncCandidate] = []
+    summary: SyncSummary = SyncSummary()
 
 
 # ── API response models ──────────────────────────────────────────
@@ -89,8 +92,8 @@ class StatusResponse(BaseModel):
     message: str = ""
     withings_configured: bool = False
     withings_token_present: bool = False
-    dry_run_default: bool = True
-    write_enabled: bool = False
+    withings_connection_state: str = "unknown"
+    garmin_connection_state: str = "unknown"
     last_sync: str | None = None
     last_report: str | None = None
 
