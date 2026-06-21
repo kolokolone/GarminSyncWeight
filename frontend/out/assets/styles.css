@@ -666,8 +666,14 @@ textarea { min-height: 260px; font-family: Consolas, monospace; }
   flex: 1;
   min-width: 0;
   margin-top: 0;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 8px;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+.compact-preview .metric-tile {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 8px;
 }
 .compact-preview .cp-tags {
   display: flex;
