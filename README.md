@@ -1,4 +1,4 @@
-# GarminSyncWeight v0.1.1
+# GarminSyncWeight v0.2.5
 
 Application locale pour synchroniser les mesures de poids et de composition corporelle Withings vers Garmin Connect.
 
@@ -24,8 +24,9 @@ Champs envoyés à Garmin via `add_body_composition` quand disponibles et valid�
 - `metabolic_age`
 - `visceral_fat_rating`
 - `bmi`
+- `percent_hydration` (converti depuis la masse d'eau Withings en kg → %)
 
-Champs ignorés prudemment : hydratation en kg Withings, champs sans équivalent Garmin confirmé, valeurs incohérentes.
+Champs ignorés : champs sans équivalent Garmin confirmé, valeurs incohérentes.
 
 ## Installation locale
 
@@ -125,5 +126,4 @@ Après une synchronisation, vérifier dans Garmin Connect que la mesure apparaî
 
 - L’écriture Garmin réelle nécessite des tokens valides et le comportement live de Garmin Connect peut changer.
 - La composition corporelle est limitée aux champs acceptés par `add_body_composition`.
-- L’hydratation Withings en kg n’est pas convertie en pourcentage Garmin.
 - Les tests automatisés utilisent des doubles contrôlés pour Withings/Garmin ; une validation live reste nécessaire avant usage prolongé.
