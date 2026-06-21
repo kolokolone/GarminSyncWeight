@@ -38,6 +38,12 @@ class WithingsConfigStatus(BaseModel):
     env_path: str
 
 
+class WithingsConnectionStatus(BaseModel):
+    connected: bool
+    state: str
+    message: str
+
+
 def _get_auth(settings: Settings = Depends(get_settings)) -> WithingsAuthService:
     token_store = TokenStore(settings.resolved_data_dir)
     return WithingsAuthService(settings, token_store)
@@ -87,6 +93,11 @@ def save_auth_config(payload: WithingsConfigRequest) -> WithingsConfigStatus:
     scope = (payload.scope or "user.metrics").strip()
     if not client_id or not client_secret:
         raise HTTPException(status_code=400, detail="Client ID et Client Secret Withings requis.")
+    if "user.metrics" not in {item.strip() for item in scope.replace(" ", ",").split(",")}:
+        raise HTTPException(
+            status_code=400,
+            detail="Le scope Withings user.metrics est obligatoire.",
+        )
     _upsert_env_values(
         _env_path(),
         {
@@ -139,6 +150,10 @@ async def auth_callback(
     Exchanges the authorization code for tokens and stores them.
     """
     try:
+        if not code:
+            raise ValueError("Code OAuth Withings manquant.")
+        if not state:
+            raise ValueError("Paramètre state Withings manquant.")
         await auth.handle_callback(code, state)
         return RedirectResponse(url="/withings?withings_auth=success")
     except ValueError as exc:
@@ -154,3 +169,17 @@ def auth_disconnect(
     """Remove stored Withings token."""
     auth.clear_token()
     return {"ok": True, "message": "Withings token cleared."}
+
+
+@router.get("/status", response_model=WithingsConnectionStatus)
+async def auth_status(auth: WithingsAuthService = Depends(_get_auth)) -> WithingsConnectionStatus:
+    """Return an active Withings connection status."""
+    result = await auth.check_connection()
+    return WithingsConnectionStatus(**result)
+
+
+@router.post("/test", response_model=WithingsConnectionStatus)
+async def auth_test(auth: WithingsAuthService = Depends(_get_auth)) -> WithingsConnectionStatus:
+    """Actively test the Withings API connection."""
+    result = await auth.check_connection()
+    return WithingsConnectionStatus(**result)
