@@ -120,7 +120,7 @@ Le port est bindé sur `127.0.0.1:8010` par défaut. Ne pas exposer publiquement
 
 ## Vérification Garmin Connect
 
-Après une synchronisation, vérifier dans Garmin Connect que la mesure apparaît au jour civil Europe/Paris attendu. Relancer la même période : l’application doit classer la mesure en `skipped_existing` ou déjà traitée, sans doublon.
+Après une synchronisation, vérifier dans Garmin Connect que la mesure apparaît au jour civil attendu. Relancer la même période : l’application doit classer la mesure en `skipped_existing` ou déjà traitée, sans doublon.
 
 ## Limites connues
 
