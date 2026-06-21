@@ -3,48 +3,32 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>GarminSyncWeight Admin</title>
+    <title>GarminSyncWeight — Tableau de bord</title>
     <link rel="stylesheet" href="/assets/styles.css" />
   </head>
   <body>
     <div class="noise"></div>
     <header class="shell header">
-      <a class="brand" href="/" data-route="home">
+      <a class="brand" href="/" data-route="dashboard">
         <span class="brand-mark">GS</span>
         <span>
           <strong>GarminSyncWeight</strong>
-          <small>Admin local sécurisé</small>
+          <small>Sync locale et contrôlée</small>
         </span>
       </a>
       <nav class="nav">
-        <a href="/" data-route="home">Accueil</a>
-        <a href="/withings" data-route="withings">Withings</a>
-        <a href="/garmin" data-route="garmin">Garmin</a>
-        <a href="/sync" data-route="sync">Synchroniser</a>
+        <a href="/" data-route="dashboard">Dashboard</a>
+        <a href="/historique" data-route="historique">Historique</a>
+        <a href="/reglages" data-route="reglages">Réglages</a>
         <a href="/logs" data-route="logs">Logs</a>
-        <a href="/docs" target="_blank" rel="noreferrer">API</a>
       </nav>
     </header>
 
     <main class="shell">
-      <section class="hero">
-        <div>
-          <p class="eyebrow">Withings → Garmin, local et contrôlé</p>
-          <h1>Console locale de synchronisation santé.</h1>
-          <p class="lede">
-            Connecte Withings et Garmin, vérifie les prérequis, lance une synchronisation réelle
-            et inspecte le rapport anti-doublon.
-          </p>
-        </div>
-        <div class="safe-card">
-          <span>Mode actuel</span>
-          <strong>SYNC CONTRÔLÉE</strong>
-          <small>Écriture refusée si Withings, Garmin ou la lecture préalable échoue.</small>
-        </div>
-      </section>
-
       <section id="view"></section>
     </main>
+
+    <!-- ── Shared templates ─────────────────────────────────────── -->
 
     <template id="tpl-card">
       <article class="card">
@@ -58,6 +42,26 @@
         <p class="message"></p>
         <div class="actions"></div>
       </article>
+    </template>
+
+    <template id="tpl-metric-tile">
+      <div class="metric-tile">
+        <span class="metric-tile-label"></span>
+        <strong class="metric-tile-value"></strong>
+      </div>
+    </template>
+
+    <template id="tpl-field-row">
+      <tr>
+        <td class="field-label"></td>
+        <td class="field-withings"></td>
+        <td class="field-garmin"></td>
+        <td><span class="field-decision"></span></td>
+      </tr>
+    </template>
+
+    <template id="tpl-log-line">
+      <div class="log-line"></div>
     </template>
 
     <script src="/assets/app.js" defer></script>
