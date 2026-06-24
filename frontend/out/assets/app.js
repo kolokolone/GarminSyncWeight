@@ -2250,7 +2250,7 @@ document.addEventListener("click", (event) => {
 
 window.addEventListener("popstate", () => setRoute(routeFromPath(), false));
 
-/* ── Statistiques (placeholder — will expand later) ──────────── */
+/* ── Statistiques ──────────────────────────────────────────────── */
 
 function renderStats() {
   const view = document.createElement("div");
@@ -2268,20 +2268,21 @@ function renderStats() {
 
   const s = state.status || {};
 
-  // ── Cards ──────────────────────────────────────────────────────
+  // ── First row: overview cards ──────────────────────────────────
   const grid = document.createElement("div");
   grid.className = "grid three";
 
-  const syncCount = s.sync_count != null ? String(s.sync_count) : "—";
-  const lastSync = s.last_sync ? new Date(s.last_sync).toLocaleString("fr-FR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
+  const lastSync = s.last_sync
+    ? new Date(s.last_sync).toLocaleString("fr-FR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
+    : "—";
 
-  const statItems = [
+  const overviewCards = [
     ["Dernière sync", lastSync, ""],
-    ["Sync réussies", syncCount, "ok"],
+    ["Sync réussies", s.sync_count != null ? String(s.sync_count) : "—", "ok"],
     ["Mesures totales", s.measurement_count != null ? String(s.measurement_count) : "—", ""],
   ];
 
-  for (const [label, val, cls] of statItems) {
+  for (const [label, val, cls] of overviewCards) {
     const card = document.createElement("div");
     card.className = "safe-card";
     card.innerHTML = `<span>${label}</span><strong class="${cls}">${val}</strong>`;
@@ -2289,54 +2290,110 @@ function renderStats() {
   }
   view.append(grid);
 
-  // ── Load latest report from API for detailed stats ─────────────
-  // Try to fetch sync reports
-  const repDiv = document.createElement("div");
-  repDiv.style.marginTop = "16px";
+  // ── Load aggregated stats from /api/sync/stats ─────────────────
+  const statsDiv = document.createElement("div");
+  statsDiv.style.marginTop = "16px";
 
   (async () => {
     try {
-      const reports = await api("/api/sync/reports");
-      if (reports && reports.length > 0) {
-        const latest = reports[0];
-        const summ = latest.summary || latest;
+      const data = await api("/api/sync/stats");
 
-        const detGrid = document.createElement("div");
-        detGrid.className = "grid three";
-        detGrid.style.marginTop = "16px";
-        const details = [
-          ["Synchronisées", summ.synced_count ?? "0", "ok"],
-          ["Doublons", summ.skipped_existing_count ?? "0", "warn"],
-          ["Conflits", summ.conflicts_count ?? "0", "warn"],
-          ["Invalides", summ.invalid_count ?? "0", "bad"],
-          ["Échecs", summ.failed_count ?? "0", "bad"],
-          ["Candidates", summ.candidates_count ?? "0", ""],
+      // ── Cumulative stats grid ──────────────────────────────────
+      const subTitle = document.createElement("p");
+      subTitle.className = "eyebrow";
+      subTitle.textContent = "Cumul toutes synchronisations";
+      statsDiv.append(subTitle);
+
+      const cumul = data.cumulative || {};
+      const cumulGrid = document.createElement("div");
+      cumulGrid.className = "grid three";
+      cumulGrid.style.marginTop = "8px";
+
+      const cumulItems = [
+        ["Synchronisées", cumul.synced_count ?? 0, "ok"],
+        ["Doublons", cumul.skipped_existing_count ?? 0, "warn"],
+        ["Conflits", cumul.conflicts_count ?? 0, "warn"],
+        ["Invalides", cumul.invalid_count ?? 0, "bad"],
+        ["Échecs", cumul.failed_count ?? 0, "bad"],
+        ["Candidates", cumul.candidates_count ?? 0, ""],
+      ];
+      for (const [label, val, cls] of cumulItems) {
+        const card = document.createElement("div");
+        card.className = "safe-card";
+        card.innerHTML = `<span>${label}</span><strong class="${cls}">${String(val)}</strong>`;
+        cumulGrid.append(card);
+      }
+      statsDiv.append(cumulGrid);
+
+      // ── Latest sync detail ─────────────────────────────────────
+      if (data.latest_summary) {
+        const latestTitle = document.createElement("p");
+        latestTitle.className = "eyebrow";
+        latestTitle.style.marginTop = "20px";
+        latestTitle.textContent = "Dernière synchronisation";
+        statsDiv.append(latestTitle);
+
+        const ls = data.latest_summary;
+        const latestGrid = document.createElement("div");
+        latestGrid.className = "grid three";
+        latestGrid.style.marginTop = "8px";
+        const latestItems = [
+          ["Synchronisées", ls.synced_count ?? 0, "ok"],
+          ["Doublons", ls.skipped_existing_count ?? 0, "warn"],
+          ["Conflits", ls.conflicts_count ?? 0, "warn"],
+          ["Invalides", ls.invalid_count ?? 0, "bad"],
+          ["Échecs", ls.failed_count ?? 0, "bad"],
+          ["Candidates", ls.candidates_count ?? 0, ""],
         ];
-        for (const [label, val, cls] of details) {
+        for (const [label, val, cls] of latestItems) {
           const card = document.createElement("div");
           card.className = "safe-card";
-          card.innerHTML = `<span>${label}</span><strong class="${cls}">${val}</strong>`;
-          detGrid.append(card);
+          card.innerHTML = `<span>${label}</span><strong class="${cls}">${String(val)}</strong>`;
+          latestGrid.append(card);
         }
-        repDiv.append(detGrid);
+        statsDiv.append(latestGrid);
 
-        // Last report raw
-        const acc = document.createElement("details");
-        acc.className = "technical-details";
-        acc.style.marginTop = "16px";
-        acc.innerHTML = `<summary>Dernier rapport technique</summary><div class="tech-content"><pre>${JSON.stringify(latest, null, 2)}</pre></div>`;
-        repDiv.append(acc);
+        // ── Attempts summary ─────────────────────────────────────
+        const attemptTitle = document.createElement("p");
+        attemptTitle.className = "eyebrow";
+        attemptTitle.style.marginTop = "20px";
+        attemptTitle.textContent = "Tentatives de synchronisation";
+        statsDiv.append(attemptTitle);
+
+        const attemptGrid = document.createElement("div");
+        attemptGrid.className = "grid three";
+        attemptGrid.style.marginTop = "8px";
+        const attemptItems = [
+          ["Totale", data.total_attempts ?? 0, ""],
+          ["Réussies", data.successful_attempts ?? 0, "ok"],
+          ["Échouées", data.failed_attempts ?? 0, "bad"],
+        ];
+        for (const [label, val, cls] of attemptItems) {
+          const card = document.createElement("div");
+          card.className = "safe-card";
+          card.innerHTML = `<span>${label}</span><strong class="${cls}">${String(val)}</strong>`;
+          attemptGrid.append(card);
+        }
+        statsDiv.append(attemptGrid);
       } else {
         const note = document.createElement("p");
         note.style.color = "var(--muted)";
         note.style.fontSize = "14px";
-        note.textContent = "Aucun rapport de synchronisation disponible. Effectue une sync pour voir les stats détaillées.";
-        repDiv.append(note);
+        note.style.marginTop = "12px";
+        note.textContent = "Aucune synchronisation effectuée pour le moment.";
+        statsDiv.append(note);
       }
+
+      // ── Raw data accordion ─────────────────────────────────────
+      statsDiv.append(technicalAccordion("Données brutes", data));
     } catch {
-      repDiv.append(technicalAccordion("Rapports", "Impossible de charger les rapports."));
+      statsDiv.append(technicalAccordion("Statistiques", "Impossible de charger les statistiques."));
     }
   })();
+
+  view.append(statsDiv);
+  return view;
+}
 
   view.append(repDiv);
   return view;

@@ -1,5 +1,8 @@
 """Controlled synchronization routes (including SSE streaming)."""
 
+import json
+from datetime import UTC, datetime, timedelta
+
 from app.cache import get_cache
 from app.config import Settings, get_settings
 from app.models.sync import SyncReport
@@ -87,6 +90,90 @@ def list_reports(settings: Settings = Depends(get_settings)) -> list[dict]:
     """List available sync reports."""
     report_builder = ReportBuilder(settings)
     return report_builder.list_reports()
+
+
+@router.get("/stats")
+def sync_stats(settings: Settings = Depends(get_settings)) -> dict:
+    """Aggregated sync statistics from SQLite (cumulative across all attempts)."""
+    sync_store = SyncStore(settings.resolved_data_dir)
+    conn = sync_store.conn
+
+    # ── Sync attempt totals ──────────────────────────────────────
+    attempt_row = conn.execute(
+        """SELECT
+               COUNT(*)                                              AS total_attempts,
+               SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS successful_attempts,
+               SUM(CASE WHEN status = 'failed'     THEN 1 ELSE 0 END) AS failed_attempts
+           FROM sync_attempts"""
+    ).fetchone()
+
+    # ── Aggregate summary JSON from completed attempts ───────────
+    rows = conn.execute(
+        """SELECT summary_json FROM sync_attempts
+           WHERE status = 'completed' AND summary_json IS NOT NULL
+           ORDER BY started_at DESC"""
+    ).fetchall()
+
+    cumul = {
+        "synced_count": 0,
+        "skipped_existing_count": 0,
+        "conflicts_count": 0,
+        "invalid_count": 0,
+        "failed_count": 0,
+        "candidates_count": 0,
+    }
+    for row in rows:
+        s = json.loads(row["summary_json"])
+        cumul["synced_count"]            += s.get("synced_count", 0)
+        cumul["skipped_existing_count"]  += s.get("skipped_existing_count", 0)
+        cumul["conflicts_count"]         += s.get("conflicts_count", 0)
+        cumul["invalid_count"]           += s.get("invalid_count", 0)
+        cumul["failed_count"]            += s.get("failed_count", 0)
+        cumul["candidates_count"]        += s.get("candidates_count", 0)
+
+    # ── Latest report summary ────────────────────────────────────
+    latest_summary = None
+    if rows:
+        latest_summary = json.loads(rows[0]["summary_json"])
+
+    # ── Last sync timestamp ──────────────────────────────────────
+    last_sync_row = conn.execute(
+        """SELECT started_at FROM sync_attempts
+           WHERE status = 'completed'
+           ORDER BY started_at DESC LIMIT 1"""
+    ).fetchone()
+
+    # ── Daily breakdown (last 30 days) ───────────────────────────
+    thirty_days_ago = (datetime.now(UTC) - timedelta(days=30)).isoformat()
+    daily_rows = conn.execute(
+        """SELECT DATE(created_at) AS day, status, COUNT(*) AS count
+           FROM sync_events
+           WHERE created_at >= ?
+           GROUP BY DATE(created_at), status
+           ORDER BY day ASC""",
+        (thirty_days_ago,),
+    ).fetchall()
+
+    days_map: dict[str, dict[str, int]] = {}
+    for row in daily_rows:
+        day = row["day"]
+        if day not in days_map:
+            days_map[day] = {}
+        days_map[day][row["status"]] = row["count"]
+
+    daily_breakdown = [
+        {"date": day, **statuses} for day, statuses in sorted(days_map.items())
+    ]
+
+    return {
+        "total_attempts":         attempt_row["total_attempts"],
+        "successful_attempts":    attempt_row["successful_attempts"],
+        "failed_attempts":        attempt_row["failed_attempts"],
+        "cumulative":             cumul,
+        "latest_summary":         latest_summary,
+        "last_sync":              last_sync_row["started_at"] if last_sync_row else None,
+        "daily_breakdown":        daily_breakdown,
+    }
 
 
 # ── SSE streaming endpoint ──────────────────────────────────────

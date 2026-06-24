@@ -825,7 +825,7 @@ textarea { min-height: 260px; font-family: Consolas, monospace; }
 
 @media (max-width: 860px) {
   .hero, .grid, .grid.three { grid-template-columns: 1fr; }
-  .header { align-items: flex-start; flex-direction: column; gap: 16px; }
+  .header-inner { align-items: flex-start; flex-direction: column; gap: 16px; }
   .settings-grid { grid-template-columns: 1fr; }
   .metric-grid { grid-template-columns: repeat(2, 1fr); }
   .status-bar { font-size: 12px; gap: 8px; }
