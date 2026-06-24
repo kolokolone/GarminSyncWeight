@@ -5,13 +5,14 @@ https://github.com/Taxuspt/garmin_mcp. Runtime API calls use the same
 ``python-garminconnect`` library and token directory expected by that connector.
 """
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
 
 from app.config import Settings
 from app.models.garmin import GarminBodyComposition, GarminWeighIn
 from app.services.garmin_auth_service import GarminAuthService
+from app.storage.garmin_cache import GarminCacheStore
 
 _logger = None
 
@@ -32,6 +33,7 @@ class GarminClient:
         self._settings = settings
         self._test_data: dict[str, Any] = test_data or {}
         self._api: Any | None = None
+        self._cache_store = GarminCacheStore(settings.resolved_data_dir)
 
     def set_test_data(
         self,
@@ -45,20 +47,83 @@ class GarminClient:
         }
 
     async def get_daily_weigh_ins(self, target_date: date) -> list[GarminWeighIn]:
-        """Fetch weigh-ins for a specific date from Garmin Connect."""
+        """Fetch weigh-ins for a specific date (cached with 1 h TTL)."""
         if self._test_data:
             return self._test_weigh_ins(target_date)
-        raw = self._client().get_daily_weigh_ins(target_date.isoformat())
-        return [self._parse_weigh_in(item, target_date) for item in self._extract_measurements(raw)]
+        date_str = target_date.isoformat()
+        cached = self._cache_store.get("weigh_in", date_str)
+        if cached is not None:
+            _log().debug("Cache HIT  weigh_ins %s  (%d entries)", date_str, len(cached))
+            return [GarminWeighIn(**item) for item in cached]
+        _log().debug("Cache MISS weigh_ins %s", date_str)
+        raw = self._client().get_daily_weigh_ins(date_str)
+        result = [self._parse_weigh_in(item, target_date) for item in self._extract_measurements(raw)]
+        self._cache_store.set("weigh_in", date_str, [r.model_dump(mode="json") for r in result])
+        _log().debug("Cache SET  weigh_ins %s  (%d entries)", date_str, len(result))
+        return result
 
     async def get_body_composition(
         self, start_date: date, end_date: date,
     ) -> list[GarminBodyComposition]:
-        """Fetch body composition entries in a date range."""
+        """Fetch body composition entries in a date range (cached per‑date, 1 h TTL).
+
+        Dates already in cache are reused; only the sub‑range of uncached
+        dates triggers an API call.  Returned list is deduplicated by date.
+        """
         if self._test_data:
             return self._test_body_composition(start_date, end_date)
-        raw = self._client().get_body_composition(start_date.isoformat(), end_date.isoformat())
-        return [self._parse_body_composition(item) for item in self._extract_body_entries(raw)]
+
+        # Check cache for every date in the range
+        cached_by_date: dict[str, list[dict[str, Any]]] = {}
+        dates_to_fetch: list[date] = []
+        current = start_date
+        while current <= end_date:
+            date_str = current.isoformat()
+            cached = self._cache_store.get("body_composition", date_str)
+            if cached is not None:
+                cached_by_date[date_str] = cached
+            else:
+                dates_to_fetch.append(current)
+            current += timedelta(days=1)
+
+        # Assemble cache hits first (preserve chronological order)
+        result: list[GarminBodyComposition] = []
+        for date_str in sorted(cached_by_date):
+            for item in cached_by_date[date_str]:
+                result.append(GarminBodyComposition(**item))
+
+        if not dates_to_fetch:
+            _log().debug("Cache FULL HIT  body_composition  %s … %s", start_date, end_date)
+            return result
+
+        # Fetch missing sub‑range from the API
+        fetch_start = dates_to_fetch[0]
+        fetch_end = dates_to_fetch[-1]
+        _log().debug(
+            "Cache PARTIAL MISS  body_composition  fetching %s … %s",
+            fetch_start, fetch_end,
+        )
+        raw = self._client().get_body_composition(
+            fetch_start.isoformat(), fetch_end.isoformat(),
+        )
+        parsed = [self._parse_body_composition(item) for item in self._extract_body_entries(raw)]
+
+        # Cache each entry individually; skip dates already collected from cache
+        for entry in parsed:
+            entry_date_str = entry.date.isoformat()
+            if entry_date_str not in cached_by_date:
+                result.append(entry)
+            self._cache_store.set(
+                "body_composition",
+                entry_date_str,
+                [entry.model_dump(mode="json")],
+            )
+
+        _log().debug(
+            "Cache SET  body_composition  %d new entries  total=%d",
+            len(parsed), len(result),
+        )
+        return result
 
     async def check_connection(self) -> dict[str, Any]:
         """Verify Garmin token validity with an active command/API check."""
@@ -122,6 +187,9 @@ class GarminClient:
         Wraps the raw garminconnect call with logging and safe error
         propagation so that callers (e.g. sync_engine) can distinguish
         between API failures and programming errors.
+
+        On success the cache entry for the written date is invalidated so
+        subsequent reads pull fresh data.
         """
         target = kwargs.copy()
         ts = target.pop("timestamp", None)  # positional first arg
@@ -131,6 +199,11 @@ class GarminClient:
             client = self._client()
             result = client.add_body_composition(ts, weight, **target)
             _log().info("add_body_composition succeeded: %s", result)
+            # Invalidate cache for the written date (ts is an ISO string)
+            if ts:
+                date_str = str(ts)[:10]
+                self._cache_store.invalidate_date(date_str)
+                _log().debug("Cache INVALIDATE %s  (post‑write)", date_str)
             return result  # type: ignore[return-value]
         except Exception as exc:
             _log().error("add_body_composition failed: %s | kwargs=%s", exc, kwargs)

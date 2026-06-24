@@ -17,6 +17,7 @@ from app.services.report_builder import ReportBuilder
 from app.services.withings_auth import WithingsAuthService
 from app.services.withings_client import WithingsClient
 from app.services.withings_parser import WithingsParser
+from app.storage.measurement_store import WithingsMeasurementStore
 from app.storage.sync_store import SyncStore
 
 _logger = None
@@ -55,6 +56,7 @@ class SyncEngine:
         self._dedup = deduplicator
         self._sync_store = sync_store
         self._report_builder = report_builder
+        self._measurement_store = WithingsMeasurementStore(settings.resolved_data_dir)
 
     async def run_sync(
         self,
@@ -75,9 +77,12 @@ class SyncEngine:
             raise ValueError("end_date must be greater than or equal to start_date")
 
         attempt_id = self._sync_store.start_attempt(start_date, end_date)
+        jr = self._sync_store.create_job(start_date, end_date, tz_name)
+        run_id = jr.run_id
+        job_id = jr.job_id
         _log().info(
-            "Sync starting — period=%s → %s  lookback=%d lookahead=%d",
-            start_date, end_date,
+            "Sync starting — period=%s → %s  run_id=%s  lookback=%d lookahead=%d",
+            start_date, end_date, run_id,
             self._settings.garmin_lookback_days,
             self._settings.garmin_lookahead_days,
         )
@@ -90,6 +95,10 @@ class SyncEngine:
             dt_start, dt_end = self._local_day_window(start_day, end_day, tz)
             withings_raw_groups = await self._withings_client.get_measurements(dt_start, dt_end)
             parsed = self._parser.parse_measure_groups(withings_raw_groups)
+            # Persist parsed measurements for Dashboard read endpoints
+            saved = self._measurement_store.save_measurements(parsed)
+            if saved:
+                _log().info("Saved %d new measurements to persistent store", saved)
             parsed = self._filter_period(self._apply_per_day_strategy(parsed), start_day, end_day)
             if progress_callback:
                 progress_callback(json.dumps({"type": "parsed", "count": len(parsed)}))
@@ -124,6 +133,8 @@ class SyncEngine:
                     summary,
                 )
                 report_candidates.append(item)
+                # Save to normalised sync_candidates table
+                self._save_new_candidate(job_id, candidate, item)
                 if progress_callback:
                     progress_callback(json.dumps({
                         "type": "candidate",
@@ -156,6 +167,11 @@ class SyncEngine:
             )
             self._report_builder.save(report)
             self._sync_store.finish_attempt(attempt_id, "completed", report.summary.model_dump())
+            report_json = report.model_dump_json()
+            self._sync_store.finish_job(
+                run_id, "completed", report.summary.model_dump(),
+                report_json=report_json,
+            )
             _log().info(
                 "Sync result — "
                 "candidates=%d "
@@ -183,6 +199,7 @@ class SyncEngine:
             return report
         except Exception as exc:
             self._sync_store.finish_attempt(attempt_id, "failed", error_message=str(exc))
+            self._sync_store.finish_job(run_id, "failed", error_message=str(exc))
             _log().error("Sync refused or failed: %s", exc)
             if progress_callback:
                 progress_callback(json.dumps({"type": "error", "message": str(exc)}))
@@ -315,6 +332,67 @@ class SyncEngine:
             error_message=error_message,
             report={"reason": reason, "mapped_fields": candidate.mapped_fields},
         )
+
+    def _save_new_candidate(
+        self,
+        job_id: int,
+        candidate: GarminBodyCompositionCandidate,
+        item: SyncCandidate,
+    ) -> None:
+        """Save candidate + decision to normalised tables (sync_candidates, sync_decisions)."""
+        fat_pct = None
+        if item.mapped_fields and "fat_percent" in item.mapped_fields:
+            fat_pct = str(item.mapped_fields["fat_percent"])
+        muscle = None
+        if item.mapped_fields and "muscle_mass" in item.mapped_fields:
+            muscle = str(item.mapped_fields["muscle_mass"])
+        bone = None
+        if item.mapped_fields and "bone_mass" in item.mapped_fields:
+            bone = str(item.mapped_fields["bone_mass"])
+        hydration = None
+        if item.mapped_fields and "hydration_percent" in item.mapped_fields:
+            hydration = str(item.mapped_fields["hydration_percent"])
+
+        cid = self._sync_store.save_candidate(
+            idempotency_key=item.idempotency_key or candidate.idempotency_key,
+            job_id=job_id if job_id else None,
+            source="withings",
+            source_measure_group_id=(
+                item.source_measure_group_id or candidate.source_measure_group_id
+            ),
+            date=item.date,
+            measured_at_local=item.measured_at_local,
+            weight_kg=str(candidate.weight) if candidate.weight else None,
+            fat_percent=fat_pct,
+            muscle_mass_kg=muscle,
+            bone_mass_kg=bone,
+            hydration_percent=hydration,
+            bmi=str(candidate.bmi) if candidate.bmi else None,
+            mapped_fields=item.mapped_fields,
+            ignored_fields=item.ignored_fields,
+            null_fields=item.null_fields,
+            mapping_warnings=item.warnings,
+            dedup_status=item.dedup_status,
+            decision=item.decision,
+            reason=item.reason,
+            garmin_write_method=(
+                "add_body_composition" if item.decision == "synced" else None
+            ),
+            garmin_params=item.garmin_call.get("params") if item.garmin_call else None,
+            garmin_response=item.garmin_response,
+            error_message=item.error_message,
+        )
+        # Write granular decision log
+        if cid and item.reason:
+            eps = None
+            if item.mapped_fields and "weight_epsilon" in item.mapped_fields:
+                eps = item.mapped_fields["weight_epsilon"]
+            self._sync_store.save_decision(
+                candidate_id=cid,
+                decision=item.decision,
+                reason=item.reason,
+                weight_epsilon=eps,
+            )
 
     @staticmethod
     def _candidate_report(
