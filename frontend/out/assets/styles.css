@@ -59,6 +59,8 @@ body {
   align-items: center;
   justify-content: space-between;
   position: relative;
+  width: min(1180px, calc(100vw - 32px));
+  margin: 0 auto;
 }
 
 .brand { display: flex; gap: 12px; align-items: center; color: var(--text); text-decoration: none; }
