@@ -92,9 +92,24 @@ def list_reports(settings: Settings = Depends(get_settings)) -> list[dict]:
     return report_builder.list_reports()
 
 
+def _table_exists(conn, table: str) -> bool:
+    try:
+        conn.execute(f"SELECT 1 FROM {table} LIMIT 0")
+        return True
+    except Exception:
+        return False
+
+
 @router.get("/stats")
 def sync_stats(settings: Settings = Depends(get_settings)) -> dict:
-    """Aggregated sync statistics from SQLite (cumulative across all attempts)."""
+    """Aggregated sync statistics from SQLite (cumulative across all attempts).
+
+    Cached for 60s since data only changes during a sync.
+    """
+    cache = get_cache()
+    cached = cache.get("sync_stats")
+    if cached is not None:
+        return cached
     sync_store = SyncStore(settings.resolved_data_dir)
     conn = sync_store.conn
 
@@ -165,7 +180,42 @@ def sync_stats(settings: Settings = Depends(get_settings)) -> dict:
         {"date": day, **statuses} for day, statuses in sorted(days_map.items())
     ]
 
-    return {
+    # ── sync_jobs stats (normalised table) ─────────────────────────
+    jobs_row = conn.execute(
+        """SELECT
+               COUNT(*)                                              AS total_jobs,
+               SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS successful_jobs,
+               SUM(CASE WHEN status = 'failed'     THEN 1 ELSE 0 END) AS failed_jobs,
+               SUM(candidates_synced)                                AS total_synced,
+               SUM(candidates_skipped)                               AS total_skipped,
+               SUM(candidates_conflict)                              AS total_conflicts,
+               SUM(candidates_invalid)                               AS total_invalid,
+               SUM(candidates_failed)                                AS total_failed
+           FROM sync_jobs"""
+    ).fetchone() if _table_exists(conn, "sync_jobs") else None
+
+    # ── sync_candidates daily breakdown ────────────────────────────
+    cand_daily = []
+    if _table_exists(conn, "sync_candidates"):
+        cand_rows = conn.execute(
+            """SELECT DATE(created_at) AS day, decision, COUNT(*) AS count
+               FROM sync_candidates
+               WHERE created_at >= ?
+               GROUP BY DATE(created_at), decision
+               ORDER BY day ASC""",
+            (thirty_days_ago,),
+        ).fetchall()
+        cand_map: dict[str, dict[str, int]] = {}
+        for row in cand_rows:
+            day = row["day"]
+            if day not in cand_map:
+                cand_map[day] = {}
+            cand_map[day][row["decision"] or "unknown"] = row["count"]
+        cand_daily = [
+            {"date": day, **statuses} for day, statuses in sorted(cand_map.items())
+        ]
+
+    result = {
         "total_attempts":         attempt_row["total_attempts"],
         "successful_attempts":    attempt_row["successful_attempts"],
         "failed_attempts":        attempt_row["failed_attempts"],
@@ -174,6 +224,22 @@ def sync_stats(settings: Settings = Depends(get_settings)) -> dict:
         "last_sync":              last_sync_row["started_at"] if last_sync_row else None,
         "daily_breakdown":        daily_breakdown,
     }
+    # Append normalised-table stats if available
+    if jobs_row:
+        result["sync_jobs"] = {
+            "total_jobs":         jobs_row["total_jobs"],
+            "successful_jobs":    jobs_row["successful_jobs"],
+            "failed_jobs":        jobs_row["failed_jobs"],
+            "total_synced":       jobs_row["total_synced"] or 0,
+            "total_skipped":      jobs_row["total_skipped"] or 0,
+            "total_conflicts":    jobs_row["total_conflicts"] or 0,
+            "total_invalid":      jobs_row["total_invalid"] or 0,
+            "total_failed":       jobs_row["total_failed"] or 0,
+        }
+    if cand_daily:
+        result["candidates_daily_breakdown"] = cand_daily
+    cache.set("sync_stats", result, ttl_seconds=60)
+    return result
 
 
 # ── SSE streaming endpoint ──────────────────────────────────────

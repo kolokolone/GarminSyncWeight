@@ -9,8 +9,9 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from app.cache import get_cache
+from app.cache import get_cache, stale_while_revalidate
 from app.config import Settings, get_settings
+from app.models.withings import BodyCompositionMeasurement
 from app.models.sync import (
     DecisionPreview,
     DedupPreview,
@@ -28,6 +29,7 @@ from app.services.mapper import WithingsToGarminMapper
 from app.services.withings_auth import WithingsAuthService
 from app.services.withings_client import WithingsClient
 from app.services.withings_parser import WithingsParser
+from app.storage.measurement_store import WithingsMeasurementStore
 from app.storage.sync_store import SyncStore
 from app.storage.token_store import TokenStore
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -39,13 +41,14 @@ router = APIRouter(prefix="/api/measurements", tags=["measurements"])
 def _build_services(settings: Settings) -> tuple:
     token_store = TokenStore(settings.resolved_data_dir)
     sync_store = SyncStore(settings.resolved_data_dir)
+    meas_store = WithingsMeasurementStore(settings.resolved_data_dir)
     auth = WithingsAuthService(settings, token_store)
     wclient = WithingsClient(auth, settings)
     parser = WithingsParser(settings)
     mapper = WithingsToGarminMapper(settings)
     garmin = GarminClient(settings)
     dedup = Deduplicator(settings, sync_store)
-    return auth, wclient, parser, mapper, garmin, dedup, sync_store
+    return auth, wclient, parser, mapper, garmin, dedup, sync_store, meas_store
 
 
 def _fmt_val(value, unit: str = "") -> str | None:
@@ -156,24 +159,40 @@ def _build_field_mapping(
     return mapping
 
 
-@router.get("/latest", response_model=MeasurementPreviewResponse)
-async def get_latest_measurement_preview(
-    days: int = Query(default=30, ge=1, le=365),
-    settings: Settings = Depends(get_settings),
-) -> MeasurementPreviewResponse:
-    """Preview the latest Withings measurement and its planned Garmin mapping.
+async def _fetch_withings_measurements(
+    wclient: WithingsClient,
+    parser: WithingsParser,
+    store: WithingsMeasurementStore,
+    start_dt: datetime,
+    end_dt: datetime,
+) -> tuple[list[BodyCompositionMeasurement], int]:
+    """Get measurements — persistent store first, Withings API fallback.
 
-    This is a READ-ONLY endpoint. It NEVER writes to Garmin.
-
-    Results are cached for 30 seconds to avoid redundant API calls.
+    Returns ``(parsed_measurements, raw_groups_count)``.
+    When served from the store *raw_groups_count* is the number of
+    measurements returned (a best‑effort approximation).
     """
-    cache = get_cache()
-    cache_key = f"latest:{days}"
-    cached_val = cache.get(cache_key)
-    if cached_val is not None:
-        return cached_val
+    start_date = start_dt.date()
+    end_date = end_dt.date()
+    if start_date <= end_date:
+        parsed = store.get_measurements(start_date.isoformat(), end_date.isoformat())
+        if parsed:
+            return parsed, len(parsed)
 
-    auth, wclient, parser, mapper, garmin, dedup, sync_store = _build_services(settings)
+    # Fallback to live API
+    raw = await wclient.get_measurements(start_dt, end_dt)
+    parsed = parser.parse_measure_groups(raw)
+    if parsed:
+        store.save_measurements(parsed)
+    return parsed, len(raw)
+
+
+async def _compute_latest_preview(
+    days: int,
+    settings: Settings,
+) -> MeasurementPreviewResponse:
+    """Full computation of the /latest preview (extracted for caching)."""
+    auth, wclient, parser, mapper, garmin, dedup, sync_store, meas_store = _build_services(settings)
 
     # ── Check Withings ──────────────────────────────────────────
     withings_status = await auth.check_connection()
@@ -193,12 +212,14 @@ async def get_latest_measurement_preview(
             garmin={"connected": False, "message": garmin_status.get("message", "")},
         )
 
-    # ── Fetch measurements from Withings ────────────────────────
+    # ── Fetch measurements (store‑first, API fallback) ──────────
     end_dt = datetime.now(UTC)
     start_dt = end_dt - timedelta(days=days)
 
     try:
-        raw_groups = await wclient.get_measurements(start_dt, end_dt)
+        parsed, raw_groups_count = await _fetch_withings_measurements(
+            wclient, parser, meas_store, start_dt, end_dt,
+        )
     except Exception as exc:
         return MeasurementPreviewResponse(
             status="error",
@@ -206,11 +227,10 @@ async def get_latest_measurement_preview(
             garmin={"connected": True},
         )
 
-    parsed = parser.parse_measure_groups(raw_groups)
     if not parsed:
         return MeasurementPreviewResponse(
             status="no_measurement",
-            withings={"connected": True, "raw_groups": len(raw_groups)},
+            withings={"connected": True, "raw_groups": raw_groups_count},
             garmin={"connected": True},
             technical={"lookback_days": days},
         )
@@ -282,22 +302,14 @@ async def get_latest_measurement_preview(
 
     # Dedup info
     dedup_map = {
-        "new_candidate": ("new",
-            "Aucune mesure Garmin proche détectée pour cette date."),
-        "duplicate_exact_or_near": ("duplicate",
-            "Mesure déjà présente dans Garmin (poids identique)."),
-        "duplicate_body_composition": ("duplicate",
-            "Composition corporelle déjà présente dans Garmin."),
-        "possible_duplicate": ("duplicate",
-            "Mesure Garmin proche détectée à vérifier."),
-        "conflict_same_day": ("conflict",
-            "Mesure Garmin différente le même jour."),
-        "already_synced_by_garminsync": ("duplicate",
-            "Déjà synchronisée via GarminSyncWeight."),
-        "invalid_missing_weight": ("conflict",
-            "Mesure Withings sans poids valide."),
-        "invalid_outlier": ("conflict",
-            "Poids aberrant (hors plage 20-300 kg)."),
+        "new_candidate": ("new", "Aucune mesure Garmin proche détectée pour cette date."),
+        "duplicate_exact_or_near": ("duplicate", "Mesure déjà présente dans Garmin (poids identique)."),
+        "duplicate_body_composition": ("duplicate", "Composition corporelle déjà présente dans Garmin."),
+        "possible_duplicate": ("duplicate", "Mesure Garmin proche détectée à vérifier."),
+        "conflict_same_day": ("conflict", "Mesure Garmin différente le même jour."),
+        "already_synced_by_garminsync": ("duplicate", "Déjà synchronisée via GarminSyncWeight."),
+        "invalid_missing_weight": ("conflict", "Mesure Withings sans poids valide."),
+        "invalid_outlier": ("conflict", "Poids aberrant (hors plage 20-300 kg)."),
     }
     dedup_status_str, dedup_msg = dedup_map.get(dedup_status, ("unchecked", "Non vérifié."))
 
@@ -321,11 +333,11 @@ async def get_latest_measurement_preview(
         decision_msg = "Non vérifié."
         can_sync = False
 
-    result = MeasurementPreviewResponse(
+    return MeasurementPreviewResponse(
         status="ready",
         withings={
             "connected": True,
-            "raw_groups": len(raw_groups),
+            "raw_groups": raw_groups_count,
             "parsed_count": len(parsed),
             "last_checked_at": datetime.now(UTC).isoformat(),
         },
@@ -348,9 +360,26 @@ async def get_latest_measurement_preview(
         technical={"lookback_days": days},
     )
 
-    # Cache the successful response (30s TTL)
-    cache.set(cache_key, result)
 
+@router.get("/latest", response_model=MeasurementPreviewResponse)
+async def get_latest_measurement_preview(
+    days: int = Query(default=30, ge=1, le=365),
+    settings: Settings = Depends(get_settings),
+) -> MeasurementPreviewResponse:
+    """Preview the latest Withings measurement and its planned Garmin mapping.
+
+    This is a READ-ONLY endpoint. It NEVER writes to Garmin.
+
+    Results are cached with stale-while-revalidate (30s fresh, 5min stale).
+    """
+    cache_key = f"latest:{days}"
+
+    async def _fetch():
+        return await _compute_latest_preview(days, settings)
+
+    result = await stale_while_revalidate(
+        cache_key, _fetch, ttl=30.0, stale_ttl=300.0,
+    )
     return result
 
 
@@ -363,7 +392,7 @@ async def get_recent_measurements(
 
     This is a READ-ONLY endpoint. It NEVER writes to Garmin.
     """
-    auth, wclient, parser, _mapper, _garmin, _dedup, _sync_store = _build_services(settings)
+    auth, wclient, parser, _mapper, _garmin, _dedup, _sync_store, meas_store = _build_services(settings)
 
     withings_status = await auth.check_connection()
     if not withings_status.get("connected"):
@@ -376,14 +405,15 @@ async def get_recent_measurements(
     start_dt = end_dt - timedelta(days=days)
 
     try:
-        raw_groups = await wclient.get_measurements(start_dt, end_dt)
+        parsed, _ = await _fetch_withings_measurements(
+            wclient, parser, meas_store, start_dt, end_dt,
+        )
     except Exception as exc:
         raise HTTPException(
             status_code=502,
             detail=f"Erreur de récupération des mesures Withings : {exc}",
         ) from exc
 
-    parsed = parser.parse_measure_groups(raw_groups)
     sorted_parsed = sorted(parsed, key=lambda m: m.measured_at_utc)
 
     items = [
@@ -413,7 +443,7 @@ async def get_measurement_history(
 
     This is a READ-ONLY endpoint. It NEVER writes to Garmin.
     """
-    auth, wclient, parser, mapper, garmin, dedup, sync_store = _build_services(settings)
+    auth, wclient, parser, mapper, garmin, dedup, sync_store, meas_store = _build_services(settings)
 
     withings_status = await auth.check_connection()
     if not withings_status.get("connected"):
@@ -422,16 +452,16 @@ async def get_measurement_history(
     end_dt = datetime.now(UTC)
     start_dt = end_dt - timedelta(days=days)
 
-    # ── Fetch Withings measurements ─────────────────────────────
+    # ── Fetch Withings measurements (store‑first, API fallback) ─
     try:
-        raw_groups = await wclient.get_measurements(start_dt, end_dt)
+        parsed, _ = await _fetch_withings_measurements(
+            wclient, parser, meas_store, start_dt, end_dt,
+        )
     except Exception as exc:
         raise HTTPException(
             status_code=502,
             detail=f"Erreur de récupération des mesures Withings : {exc}",
         ) from exc
-
-    parsed = parser.parse_measure_groups(raw_groups)
     if not parsed:
         return HistoryMeasurementsResponse(
             items=[],

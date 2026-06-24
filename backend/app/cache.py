@@ -4,8 +4,9 @@ Used to avoid redundant Withings/Garmin API calls within short windows.
 Cache is invalidated after any write operation (sync) or on explicit refresh.
 """
 
+import asyncio
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from typing import Any
 
 
@@ -51,6 +52,62 @@ def get_cache() -> TTLCache:
     if _cache is None:
         _cache = TTLCache()
     return _cache
+
+
+async def stale_while_revalidate(
+    key: str,
+    fetch_func: Callable[[], Coroutine[Any, Any, Any]],
+    ttl: float = 30.0,
+    stale_ttl: float = 300.0,
+) -> Any:
+    """Serve stale cache while refreshing in background.
+
+    *ttl* — cache is considered fresh within this window (seconds).  
+    *stale_ttl* — cache may be served stale while a background refresh runs.
+
+    When the cache is fresh → return immediately.  
+    When stale but within *stale_ttl* → return immediately + kick off async refresh.  
+    When stale beyond *stale_ttl* or missing → await the fetch.
+    """
+    cache = get_cache()
+    meta_key = f"{key}:meta"
+
+    cached_val = cache.get(key)
+    meta = cache.get(meta_key) or {}
+
+    if cached_val is not None and isinstance(meta, dict):
+        cached_at = meta.get("cached_at")
+        if cached_at:
+            age = time.monotonic() - cached_at
+            if age < ttl:
+                return cached_val
+            if age < stale_ttl:
+                asyncio.ensure_future(_background_refresh(key, meta_key, fetch_func, ttl))
+                return cached_val
+
+    # Cache miss or too stale — fetch synchronously
+    result = await fetch_func()
+    now = time.monotonic()
+    cache.set(key, result, ttl_seconds=stale_ttl)
+    cache.set(meta_key, {"cached_at": now}, ttl_seconds=stale_ttl)
+    return result
+
+
+async def _background_refresh(
+    key: str,
+    meta_key: str,
+    fetch_func: Callable[[], Coroutine[Any, Any, Any]],
+    ttl: float,
+) -> None:
+    """Refresh cache in background (fire-and-forget)."""
+    try:
+        result = await fetch_func()
+        cache = get_cache()
+        now = time.monotonic()
+        cache.set(key, result, ttl_seconds=ttl)
+        cache.set(meta_key, {"cached_at": now}, ttl_seconds=ttl)
+    except Exception:
+        pass  # Stale value remains in cache
 
 
 def cached(key: str, ttl_seconds: float = 30.0) -> Callable:

@@ -1,5 +1,6 @@
-"""GET /api/status — health check and configuration overview."""
+"""GET /api/status — health check and configuration overview (cached 60s)."""
 
+from app.cache import get_cache
 from app.config import Settings, get_settings
 from app.models.sync import StatusResponse
 from app.services.garmin_client import GarminClient
@@ -9,6 +10,8 @@ from app.storage.token_store import TokenStore
 from fastapi import APIRouter, Depends
 
 router = APIRouter(tags=["status"])
+
+_STATUS_CACHE_TTL = 60  # seconds
 
 
 def _get_auth(settings: Settings = Depends(get_settings)) -> WithingsAuthService:
@@ -21,6 +24,10 @@ async def get_status(
     settings: Settings = Depends(get_settings),
     auth: WithingsAuthService = Depends(_get_auth),
 ) -> StatusResponse:
+    cache = get_cache()
+    cached = cache.get("status_response")
+    if cached is not None:
+        return cached
     """Return the application status and configuration overview.
 
     No secrets are exposed. Token presence is reported as boolean only.
@@ -55,7 +62,7 @@ async def get_status(
         state = "ready"
         message = "GarminSyncWeight prêt pour une synchronisation contrôlée."
 
-    return StatusResponse(
+    result = StatusResponse(
         app_name="GarminSyncWeight",
         version=settings.app_version,
         state=state,
@@ -67,3 +74,5 @@ async def get_status(
         last_sync=last_sync,
         last_report=last_report,
     )
+    cache.set("status_response", result, ttl_seconds=_STATUS_CACHE_TTL)
+    return result
