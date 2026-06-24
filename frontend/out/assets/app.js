@@ -2266,30 +2266,6 @@ function renderStats() {
   sub.textContent = "Répartition et historique des synchronisations.";
   view.append(sub);
 
-  const s = state.status || {};
-
-  // ── First row: overview cards ──────────────────────────────────
-  const grid = document.createElement("div");
-  grid.className = "grid three";
-
-  const lastSync = s.last_sync
-    ? new Date(s.last_sync).toLocaleString("fr-FR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
-    : "—";
-
-  const overviewCards = [
-    ["Dernière sync", lastSync, ""],
-    ["Sync réussies", s.sync_count != null ? String(s.sync_count) : "—", "ok"],
-    ["Mesures totales", s.measurement_count != null ? String(s.measurement_count) : "—", ""],
-  ];
-
-  for (const [label, val, cls] of overviewCards) {
-    const card = document.createElement("div");
-    card.className = "safe-card";
-    card.innerHTML = `<span>${label}</span><strong class="${cls}">${val}</strong>`;
-    grid.append(card);
-  }
-  view.append(grid);
-
   // ── Load aggregated stats from /api/sync/stats ─────────────────
   const statsDiv = document.createElement("div");
   statsDiv.style.marginTop = "16px";
@@ -2298,9 +2274,32 @@ function renderStats() {
     try {
       const data = await api("/api/sync/stats");
 
+      // ── Overview cards ─────────────────────────────────────────
+      const grid = document.createElement("div");
+      grid.className = "grid three";
+
+      const lastSync = data.last_sync
+        ? new Date(data.last_sync).toLocaleString("fr-FR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
+        : "—";
+
+      const overviewCards = [
+        ["Dernière sync", lastSync, ""],
+        ["Tentatives réussies", data.successful_attempts != null ? String(data.successful_attempts) : "0", "ok"],
+        ["Mesures envoyées", (data.cumulative?.synced_count ?? 0) > 0 ? String(data.cumulative.synced_count) : "0", ""],
+      ];
+
+      for (const [label, val, cls] of overviewCards) {
+        const card = document.createElement("div");
+        card.className = "safe-card";
+        card.innerHTML = `<span>${label}</span><strong class="${cls}">${val}</strong>`;
+        grid.append(card);
+      }
+      statsDiv.append(grid);
+
       // ── Cumulative stats grid ──────────────────────────────────
       const subTitle = document.createElement("p");
       subTitle.className = "eyebrow";
+      subTitle.style.marginTop = "20px";
       subTitle.textContent = "Cumul toutes synchronisations";
       statsDiv.append(subTitle);
 
@@ -2392,10 +2391,6 @@ function renderStats() {
   })();
 
   view.append(statsDiv);
-  return view;
-}
-
-  view.append(repDiv);
   return view;
 }
 

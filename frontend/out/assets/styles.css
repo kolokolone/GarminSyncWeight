@@ -37,14 +37,15 @@ body {
 
 .shell { width: min(1180px, calc(100vw - 32px)); margin: 0 auto; }
 
-.header {
+/* ── Header / sticky blur wrapper ──────────────────────────────── */
+
+.header-sticky {
   position: sticky;
   top: 0;
   z-index: 5;
-  padding: 22px 0;
 }
 
-.header::before {
+.header-sticky::before {
   content: '';
   position: absolute;
   inset: 0;
@@ -54,13 +55,13 @@ body {
   pointer-events: none;
 }
 
-.header-inner {
+.header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  position: relative;
   width: min(1180px, calc(100vw - 32px));
   margin: 0 auto;
+  padding: 22px 0;
 }
 
 .brand { display: flex; gap: 12px; align-items: center; color: var(--text); text-decoration: none; }
@@ -419,6 +420,7 @@ textarea { min-height: 260px; font-family: Consolas, monospace; }
 
 .progress-wrap {
   margin-top: 14px;
+  width: 100%;
 }
 
 .progress-track {
@@ -827,7 +829,7 @@ textarea { min-height: 260px; font-family: Consolas, monospace; }
 
 @media (max-width: 860px) {
   .hero, .grid, .grid.three { grid-template-columns: 1fr; }
-  .header-inner { align-items: flex-start; flex-direction: column; gap: 16px; }
+  .header { align-items: flex-start; flex-direction: column; gap: 16px; }
   .settings-grid { grid-template-columns: 1fr; }
   .metric-grid { grid-template-columns: repeat(2, 1fr); }
   .status-bar { font-size: 12px; gap: 8px; }
