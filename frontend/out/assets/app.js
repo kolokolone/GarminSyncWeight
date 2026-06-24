@@ -2255,16 +2255,11 @@ window.addEventListener("popstate", () => setRoute(routeFromPath(), false));
 function renderStats() {
   const view = document.createElement("div");
 
+  const eye = document.createElement("p"); eye.className = "eyebrow"; eye.textContent = "Synthèse";
+  view.append(eye);
   const h = document.createElement("h1");
   h.textContent = "Statistiques";
-  h.style.marginBottom = "8px";
   view.append(h);
-
-  const sub = document.createElement("p");
-  sub.style.color = "var(--muted)";
-  sub.style.marginBottom = "20px";
-  sub.textContent = "Répartition et historique des synchronisations.";
-  view.append(sub);
 
   // ── Load aggregated stats from /api/sync/stats ─────────────────
   const statsDiv = document.createElement("div");
