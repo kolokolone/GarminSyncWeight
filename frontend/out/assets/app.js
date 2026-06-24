@@ -1664,13 +1664,29 @@ async function loadDashboardData() {
 function renderHistorique() {
   const view = document.createElement("div");
 
+  const w = state.withings || {};
+  const summary = state._historySummary;
+
+  // Eyebrow + optional summary counts
   const eye = document.createElement("p"); eye.className = "eyebrow"; eye.textContent = "Mesures récentes";
+  if (summary && summary.count > 0) {
+    const sumSpan = document.createElement("span");
+    sumSpan.style.fontWeight = "400";
+    sumSpan.style.textTransform = "none";
+    sumSpan.style.letterSpacing = "normal";
+    const parts = [];
+    if (summary.new_count > 0) parts.push(`<span style="color:var(--green)">${summary.new_count} nouveau${summary.new_count > 1 ? "x" : ""}</span>`);
+    if (summary.already_synced_count > 0) parts.push(`<span>${summary.already_synced_count} synchronisé${summary.already_synced_count > 1 ? "s" : ""}</span>`);
+    if (summary.conflict_count > 0) parts.push(`<span style="color:var(--amber)">${summary.conflict_count} conflit${summary.conflict_count > 1 ? "s" : ""}</span>`);
+    if (summary.failed_count > 0) parts.push(`<span style="color:var(--red)">${summary.failed_count} échec${summary.failed_count > 1 ? "s" : ""}</span>`);
+    sumSpan.innerHTML = " · " + parts.join(" · ");
+    eye.append(sumSpan);
+  }
   view.append(eye);
+
   const h = document.createElement("h1");
   h.textContent = "Historique des mesures";
   view.append(h);
-
-  const w = state.withings || {};
 
   // Auto-load history data on first visit
   if (state._historyItems === undefined && state._historyLoading !== true && w.connected) {
@@ -1685,26 +1701,7 @@ function renderHistorique() {
 
   // ── Load history data if not cached ─────────────────────────
   const items = state._historyItems;
-  const summary = state._historySummary;
   const loading = state._historyLoading;
-
-  // Summary bar
-  if (summary && summary.count > 0) {
-    const sumBar = document.createElement("div");
-    sumBar.style.display = "flex";
-    sumBar.style.flexWrap = "wrap";
-    sumBar.style.gap = "12px";
-    sumBar.style.marginBottom = "14px";
-    sumBar.style.fontSize = "12px";
-    sumBar.style.color = "var(--muted)";
-    const parts = [];
-    if (summary.new_count > 0) parts.push(`<span style="color:var(--green)">${summary.new_count} nouveau${summary.new_count > 1 ? "x" : ""}</span>`);
-    if (summary.already_synced_count > 0) parts.push(`<span>${summary.already_synced_count} synchronisé${summary.already_synced_count > 1 ? "s" : ""}</span>`);
-    if (summary.conflict_count > 0) parts.push(`<span style="color:var(--amber)">${summary.conflict_count} conflit${summary.conflict_count > 1 ? "s" : ""}</span>`);
-    if (summary.failed_count > 0) parts.push(`<span style="color:var(--red)">${summary.failed_count} échec${summary.failed_count > 1 ? "s" : ""}</span>`);
-    sumBar.innerHTML = parts.join(" · ");
-    view.append(sumBar);
-  }
 
   if (loading) {
     view.append(loadingState("Vérification des statuts Garmin"));
