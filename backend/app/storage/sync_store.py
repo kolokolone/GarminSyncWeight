@@ -322,7 +322,14 @@ class SyncStore:
             ),
         )
         self.conn.commit()
-        return cur.lastrowid or 0
+        if cur.rowcount == 0:
+            # INSERT OR IGNORE suppressed a duplicate — return existing row id
+            row = self.conn.execute(
+                "SELECT id FROM sync_candidates WHERE idempotency_key = ?",
+                (idempotency_key,),
+            ).fetchone()
+            return row["id"] if row else 0
+        return cur.lastrowid
 
     def candidate_exists(self, idempotency_key: str) -> bool:
         row = self.conn.execute(
