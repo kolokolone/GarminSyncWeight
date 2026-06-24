@@ -138,6 +138,7 @@ class WithingsMeasurementStore:
         for m in measurements:
             row = self._measurement_to_row(m)
             try:
+                before = self.conn.total_changes
                 self.conn.execute(
                     """INSERT OR IGNORE INTO withings_measurements
                        (source_measure_group_id, source_device_id, date,
@@ -175,7 +176,7 @@ class WithingsMeasurementStore:
                         now,
                     ),
                 )
-                if self.conn.total_changes > 0:
+                if self.conn.total_changes > before:
                     saved += 1
             except sqlite3.IntegrityError:
                 pass

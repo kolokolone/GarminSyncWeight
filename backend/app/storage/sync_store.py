@@ -30,13 +30,22 @@ class SyncStore:
         return self._conn
 
     def event_exists(self, idempotency_key: str) -> bool:
-        """Check whether this key was really handled by a prior sync."""
+        """Check whether this key was really handled by a prior sync.
+
+        Checks both the legacy ``sync_events`` table and the new
+        ``sync_candidates`` table so that data migrated from Phase 3
+        is also recognised.
+        """
         row = self.conn.execute(
             """SELECT 1 FROM sync_events
                WHERE idempotency_key = ?
                  AND status IN ('synced', 'skipped_existing')
+               UNION
+               SELECT 1 FROM sync_candidates
+               WHERE idempotency_key = ?
+                 AND decision IN ('synced', 'skipped_existing')
                LIMIT 1""",
-            (idempotency_key,),
+            (idempotency_key, idempotency_key),
         ).fetchone()
         return row is not None
 
