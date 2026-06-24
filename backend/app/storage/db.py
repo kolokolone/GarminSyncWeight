@@ -3,6 +3,7 @@
 import json
 import logging
 import sqlite3
+import uuid
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -213,6 +214,7 @@ def init_db(db_path: Path) -> sqlite3.Connection:
     conn.executescript(SYNC_DECISIONS_SCHEMA)
     conn.executescript(SCHEMA_MIGRATIONS_SCHEMA)
     _migrate_sync_events_to_candidates(conn)
+    _migrate_sync_attempts_to_jobs(conn)
     _ensure_column(conn, "withings_tokens", "userid", "TEXT")
     return conn
 
@@ -282,6 +284,74 @@ def _migrate_sync_events_to_candidates(conn):
 
     conn.commit()
     logger.info("Migrated %d / %d sync_events to sync_candidates", inserted, event_count)
+
+
+def _migrate_sync_attempts_to_jobs(conn: sqlite3.Connection) -> None:
+    """Migrate legacy ``sync_attempts`` → ``sync_jobs`` (one-shot, idempotent).
+
+    Each attempt becomes a ``sync_job`` with a generated ``run_id``.
+    ``duration_seconds`` is computed from ``started_at`` / ``completed_at``.
+    Old columns ``summary_json`` is mapped to ``report_json``.
+    """
+    cur = conn.execute("SELECT COUNT(*) FROM sync_jobs")
+    if cur.fetchone()[0] > 0:
+        logger.info("sync_jobs already populated — skipping migration")
+        return
+    try:
+        cur = conn.execute("SELECT COUNT(*) FROM sync_attempts")
+        attempt_count = cur.fetchone()[0]
+    except Exception:
+        logger.info("No legacy sync_attempts table — skipping migration")
+        return
+    if attempt_count == 0:
+        logger.info("sync_attempts is empty — skipping migration")
+        return
+
+    logger.info("Migrating %d sync_attempts → sync_jobs ...", attempt_count)
+    rows = conn.execute(
+        """SELECT started_at, completed_at, start_date, end_date,
+                  status, summary_json, error_message
+           FROM sync_attempts"""
+    ).fetchall()
+
+    inserted = 0
+    for row in rows:
+        duration = None
+        if row["completed_at"] and row["started_at"]:
+            try:
+                s = datetime.fromisoformat(row["started_at"])
+                c = datetime.fromisoformat(row["completed_at"])
+                duration = (c - s).total_seconds()
+            except (ValueError, TypeError):
+                pass
+        new_status = row["status"]
+        if new_status not in ("completed", "failed"):
+            new_status = "completed" if row["completed_at"] else "failed"
+        try:
+            conn.execute(
+                """INSERT OR IGNORE INTO sync_jobs
+                   (run_id, started_at, completed_at, start_date, end_date,
+                    trigger, status, duration_seconds, error_message,
+                    report_json, candidates_total)
+                   VALUES (?, ?, ?, ?, ?, 'manual', ?, ?, ?, ?, 0)""",
+                (
+                    uuid.uuid4().hex[:16],
+                    row["started_at"],
+                    row["completed_at"],
+                    row["start_date"],
+                    row["end_date"],
+                    new_status,
+                    duration,
+                    row["error_message"],
+                    row["summary_json"],  # mapped to report_json
+                ),
+            )
+            inserted += 1
+        except Exception as exc:
+            logger.warning("Failed to migrate attempt %s: %s", row["started_at"], exc)
+
+    conn.commit()
+    logger.info("Migrated %d / %d sync_attempts to sync_jobs", inserted, attempt_count)
 
 
 def _legacy_status_to_decision(status):
