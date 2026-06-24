@@ -38,14 +38,27 @@ body {
 .shell { width: min(1180px, calc(100vw - 32px)); margin: 0 auto; }
 
 .header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 22px 0;
   position: sticky;
   top: 0;
   z-index: 5;
+  padding: 22px 0;
+}
+
+.header::before {
+  content: '';
+  position: absolute;
+  inset: 0;
   backdrop-filter: blur(18px);
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 64px, #000 calc(100% - 64px), transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0%, #000 64px, #000 calc(100% - 64px), transparent 100%);
+  pointer-events: none;
+}
+
+.header-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: relative;
 }
 
 .brand { display: flex; gap: 12px; align-items: center; color: var(--text); text-decoration: none; }
@@ -404,13 +417,15 @@ textarea { min-height: 260px; font-family: Consolas, monospace; }
 
 .progress-wrap {
   margin-top: 14px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
+}
+
+.progress-track {
   height: 10px;
+  border-radius: 999px;
   overflow: hidden;
   background: rgba(0,0,0,.22);
+  border: 1px solid var(--line);
   position: relative;
-  padding-bottom: 18px;
 }
 
 .progress-bar {

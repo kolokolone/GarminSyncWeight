@@ -1,4 +1,4 @@
-# GarminSyncWeight v0.2.5
+# GarminSyncWeight v0.2.6
 
 Application locale pour synchroniser les mesures de poids et de composition corporelle Withings vers Garmin Connect.
 

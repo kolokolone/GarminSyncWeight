@@ -872,9 +872,13 @@ function renderProgressBar() {
   const wrap = document.createElement("div");
   wrap.className = "progress-wrap";
 
+  const track = document.createElement("div");
+  track.className = "progress-track";
+
   const bar = document.createElement("div");
   bar.className = "progress-bar";
-  wrap.append(bar);
+  track.append(bar);
+  wrap.append(track);
 
   const text = document.createElement("div");
   text.className = "sync-loading-text";
