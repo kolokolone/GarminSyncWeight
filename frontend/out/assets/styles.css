@@ -43,7 +43,7 @@ body {
   z-index: 5;
 }
 
-.header-shell + * { padding-top: 16px; }
+.header-shell + * { padding-top: 72px; }
 
 .header {
   display: flex;
