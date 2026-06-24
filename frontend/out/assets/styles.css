@@ -163,7 +163,7 @@ textarea { min-height: 260px; font-family: Consolas, monospace; }
   background: linear-gradient(180deg, var(--panel-strong), rgba(246,241,224,.055));
   border-radius: 28px;
   box-shadow: 0 24px 80px rgba(0,0,0,.28);
-  margin-bottom: 24px;
+  margin-bottom: 16px;
   font-size: 13px;
 }
 
