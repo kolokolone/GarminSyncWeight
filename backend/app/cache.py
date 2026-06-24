@@ -5,9 +5,19 @@ Cache is invalidated after any write operation (sync) or on explicit refresh.
 """
 
 import asyncio
+import logging
 import time
 from collections.abc import Callable, Coroutine
 from typing import Any
+
+_logger: logging.Logger | None = None
+
+
+def _log() -> logging.Logger:
+    global _logger
+    if _logger is None:
+        _logger = logging.getLogger(__name__)
+    return _logger
 
 
 class TTLCache:
@@ -106,8 +116,9 @@ async def _background_refresh(
         now = time.monotonic()
         cache.set(key, result, ttl_seconds=ttl)
         cache.set(meta_key, {"cached_at": now}, ttl_seconds=ttl)
-    except Exception:
-        pass  # Stale value remains in cache
+    except Exception as exc:
+        _log().warning("Background refresh failed for %s: %s", key, exc)
+        # Stale value remains in cache
 
 
 def cached(key: str, ttl_seconds: float = 30.0) -> Callable:

@@ -93,9 +93,13 @@ def list_reports(settings: Settings = Depends(get_settings)) -> list[dict]:
 
 
 def _table_exists(conn, table: str) -> bool:
+    """Return True if *table* exists in the database."""
     try:
-        conn.execute(f"SELECT 1 FROM {table} LIMIT 0")
-        return True
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            (table,),
+        ).fetchone()
+        return row is not None
     except Exception:
         return False
 

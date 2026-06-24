@@ -214,8 +214,24 @@ class GarminClient:
         return self._client().add_weigh_in(**kwargs)
 
     async def add_weigh_in(self, **kwargs: Any) -> dict[str, Any]:
-        """Write weigh-in to Garmin Connect."""
-        return self._client().add_weigh_in(**kwargs)
+        """Write weigh-in to Garmin Connect.
+
+        Invalidates the cache for the written date on success.
+        """
+        target = kwargs.copy()
+        ts = target.pop("timestamp", None)
+        weight = target.pop("weight", None)
+        _log().info("add_weigh_in: timestamp=%s weight=%s extra=%s", ts, weight, target)
+        try:
+            result = self._client().add_weigh_in(**kwargs)
+            if ts:
+                date_str = str(ts)[:10]
+                self._cache_store.invalidate_date(date_str)
+                _log().debug("Cache INVALIDATE %s  (post‑weigh_in)", date_str)
+            return result  # type: ignore[return-value]
+        except Exception as exc:
+            _log().error("add_weigh_in failed: %s | kwargs=%s", exc, kwargs)
+            raise
 
     def _client(self) -> Any:
         if self._api is not None:
