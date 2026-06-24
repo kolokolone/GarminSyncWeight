@@ -39,7 +39,7 @@ body {
 
 .header-shell {
   position: sticky;
-  top: 0;
+  top: 10px;
   z-index: 5;
 }
 
