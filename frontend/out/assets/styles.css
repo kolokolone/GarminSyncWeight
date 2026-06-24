@@ -39,11 +39,11 @@ body {
 
 .header-shell {
   position: sticky;
-  top: 10px;
+  top: 16px;
   z-index: 5;
 }
 
-.header-shell + * { margin-top: 10px; }
+.header-shell + * { margin-top: 16px; }
 
 .header {
   display: flex;
