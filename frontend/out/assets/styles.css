@@ -37,31 +37,21 @@ body {
 
 .shell { width: min(1180px, calc(100vw - 32px)); margin: 0 auto; }
 
-/* ── Header / sticky blur wrapper ──────────────────────────────── */
-
-.header-sticky {
+.header {
   position: sticky;
   top: 0;
   z-index: 5;
-}
-
-.header-sticky::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  backdrop-filter: blur(18px);
-  -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 64px, #000 calc(100% - 64px), transparent 100%);
-  mask-image: linear-gradient(to right, transparent 0%, #000 64px, #000 calc(100% - 64px), transparent 100%);
-  pointer-events: none;
-}
-
-.header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   width: min(1180px, calc(100vw - 32px));
   margin: 0 auto;
-  padding: 22px 0;
+  padding: 14px 20px;
+  margin-bottom: 10px;
+  background: rgba(7, 17, 14, 0.75);
+  backdrop-filter: blur(18px);
+  border-radius: 28px;
+  border: 1px solid var(--line);
 }
 
 .brand { display: flex; gap: 12px; align-items: center; color: var(--text); text-decoration: none; }
