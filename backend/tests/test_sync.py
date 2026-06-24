@@ -125,13 +125,16 @@ async def test_sync_refuses_without_active_prerequisites(settings: Settings) -> 
 
 def test_idempotency_event_blocks_only_confirmed_results(settings: Settings) -> None:
     store = SyncStore(settings.resolved_data_dir)
-    key = "withings:123:2024-06-01:78.50:scale-1"
-    assert store.event_exists(key) is False
-    store.save_event(
-        key, "withings", "123", datetime.now(UTC).isoformat(), "2024-06-01", "78.5", "failed"
+    key_failed = "withings:789:2024-06-02:78.50:scale-1"
+    key_synced = "withings:789:2024-06-03:78.50:scale-1"
+    assert store.event_exists(key_failed) is False
+    store.save_candidate(
+        idempotency_key=key_failed, date="2024-06-02", weight_kg="78.5",
+        decision="failed", reason="Test failure",
     )
-    assert store.event_exists(key) is False
-    store.save_event(
-        key, "withings", "123", datetime.now(UTC).isoformat(), "2024-06-01", "78.5", "synced"
+    assert store.event_exists(key_failed) is False
+    store.save_candidate(
+        idempotency_key=key_synced, date="2024-06-03", weight_kg="78.5",
+        decision="synced", reason="Test sync",
     )
-    assert store.event_exists(key) is True
+    assert store.event_exists(key_synced) is True

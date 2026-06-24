@@ -559,12 +559,12 @@ async def get_measurement_history(
             else:
                 item.decision = "unchecked"
 
-            # Check sync store for actual sync events
+            # Check sync store for actual sync outcome
             if candidate.idempotency_key:
-                event = sync_store.get_event_by_key(candidate.idempotency_key)
-                if event:
-                    item.sync_event_status = event.get("status")
-                    item.last_error = event.get("error_message")
+                cand = sync_store.get_candidate_by_key(candidate.idempotency_key)
+                if cand:
+                    item.sync_event_status = cand.get("decision")
+                    item.last_error = cand.get("error_message")
 
             item.warning_count = len(candidate.mapping_warnings or [])
 

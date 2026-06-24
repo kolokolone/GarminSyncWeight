@@ -76,7 +76,6 @@ class SyncEngine:
         if end_day < start_day:
             raise ValueError("end_date must be greater than or equal to start_date")
 
-        attempt_id = self._sync_store.start_attempt(start_date, end_date)
         jr = self._sync_store.create_job(start_date, end_date, tz_name)
         run_id = jr.run_id
         job_id = jr.job_id
@@ -166,7 +165,6 @@ class SyncEngine:
                 summary=summary,
             )
             self._report_builder.save(report)
-            self._sync_store.finish_attempt(attempt_id, "completed", report.summary.model_dump())
             report_json = report.model_dump_json()
             self._sync_store.finish_job(
                 run_id, "completed", report.summary.model_dump(),
@@ -198,7 +196,6 @@ class SyncEngine:
                 }))
             return report
         except Exception as exc:
-            self._sync_store.finish_attempt(attempt_id, "failed", error_message=str(exc))
             self._sync_store.finish_job(run_id, "failed", error_message=str(exc))
             _log().error("Sync refused or failed: %s", exc)
             if progress_callback:
@@ -257,14 +254,12 @@ class SyncEngine:
         if self._dedup.should_skip(status):
             decision, reason = self._decision_for_status(status)
             self._increment_summary(summary, decision)
-            self._save_candidate_event(candidate, decision, reason)
             return self._candidate_report(candidate, status, decision, reason)
 
         garmin_params = candidate.garmin_params()
         try:
             response = await self._garmin.add_body_composition(**garmin_params)
             summary.synced_count += 1
-            self._save_candidate_event(candidate, "synced", "Écriture Garmin réussie.", response)
             return self._candidate_report(
                 candidate,
                 status,
@@ -274,12 +269,6 @@ class SyncEngine:
             )
         except Exception as exc:
             summary.failed_count += 1
-            self._save_candidate_event(
-                candidate,
-                "failed",
-                "Écriture Garmin échouée.",
-                error_message=str(exc),
-            )
             return self._candidate_report(
                 candidate,
                 status,
@@ -308,30 +297,6 @@ class SyncEngine:
             summary.conflicts_count += 1
         elif decision == "invalid":
             summary.invalid_count += 1
-
-    def _save_candidate_event(
-        self,
-        candidate: GarminBodyCompositionCandidate,
-        status: str,
-        reason: str,
-        garmin_response: dict[str, Any] | None = None,
-        error_message: str | None = None,
-    ) -> None:
-        self._sync_store.save_event(
-            idempotency_key=candidate.idempotency_key,
-            source="withings",
-            source_measure_group_id=candidate.source_measure_group_id,
-            source_measured_at_utc=(
-                candidate.measured_at_local.isoformat() if candidate.measured_at_local else None
-            ),
-            garmin_date=candidate.date.isoformat(),
-            weight_kg=str(candidate.weight) if candidate.weight else None,
-            status=status,
-            garmin_write_method="add_body_composition" if status == "synced" else None,
-            garmin_response=garmin_response,
-            error_message=error_message,
-            report={"reason": reason, "mapped_fields": candidate.mapped_fields},
-        )
 
     def _save_new_candidate(
         self,

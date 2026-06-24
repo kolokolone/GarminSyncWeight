@@ -92,21 +92,9 @@ def list_reports(settings: Settings = Depends(get_settings)) -> list[dict]:
     return report_builder.list_reports()
 
 
-def _table_exists(conn, table: str) -> bool:
-    """Return True if *table* exists in the database."""
-    try:
-        row = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-            (table,),
-        ).fetchone()
-        return row is not None
-    except Exception:
-        return False
-
-
 @router.get("/stats")
 def sync_stats(settings: Settings = Depends(get_settings)) -> dict:
-    """Aggregated sync statistics from SQLite (cumulative across all attempts).
+    """Aggregated sync statistics from SQLite (cumulative across all jobs).
 
     Cached for 60s since data only changes during a sync.
     """
@@ -117,74 +105,7 @@ def sync_stats(settings: Settings = Depends(get_settings)) -> dict:
     sync_store = SyncStore(settings.resolved_data_dir)
     conn = sync_store.conn
 
-    # ── Sync attempt totals ──────────────────────────────────────
-    attempt_row = conn.execute(
-        """SELECT
-               COUNT(*)                                              AS total_attempts,
-               SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS successful_attempts,
-               SUM(CASE WHEN status = 'failed'     THEN 1 ELSE 0 END) AS failed_attempts
-           FROM sync_attempts"""
-    ).fetchone()
-
-    # ── Aggregate summary JSON from completed attempts ───────────
-    rows = conn.execute(
-        """SELECT summary_json FROM sync_attempts
-           WHERE status = 'completed' AND summary_json IS NOT NULL
-           ORDER BY started_at DESC"""
-    ).fetchall()
-
-    cumul = {
-        "synced_count": 0,
-        "skipped_existing_count": 0,
-        "conflicts_count": 0,
-        "invalid_count": 0,
-        "failed_count": 0,
-        "candidates_count": 0,
-    }
-    for row in rows:
-        s = json.loads(row["summary_json"])
-        cumul["synced_count"]            += s.get("synced_count", 0)
-        cumul["skipped_existing_count"]  += s.get("skipped_existing_count", 0)
-        cumul["conflicts_count"]         += s.get("conflicts_count", 0)
-        cumul["invalid_count"]           += s.get("invalid_count", 0)
-        cumul["failed_count"]            += s.get("failed_count", 0)
-        cumul["candidates_count"]        += s.get("candidates_count", 0)
-
-    # ── Latest report summary ────────────────────────────────────
-    latest_summary = None
-    if rows:
-        latest_summary = json.loads(rows[0]["summary_json"])
-
-    # ── Last sync timestamp ──────────────────────────────────────
-    last_sync_row = conn.execute(
-        """SELECT started_at FROM sync_attempts
-           WHERE status = 'completed'
-           ORDER BY started_at DESC LIMIT 1"""
-    ).fetchone()
-
-    # ── Daily breakdown (last 30 days) ───────────────────────────
-    thirty_days_ago = (datetime.now(UTC) - timedelta(days=30)).isoformat()
-    daily_rows = conn.execute(
-        """SELECT DATE(created_at) AS day, status, COUNT(*) AS count
-           FROM sync_events
-           WHERE created_at >= ?
-           GROUP BY DATE(created_at), status
-           ORDER BY day ASC""",
-        (thirty_days_ago,),
-    ).fetchall()
-
-    days_map: dict[str, dict[str, int]] = {}
-    for row in daily_rows:
-        day = row["day"]
-        if day not in days_map:
-            days_map[day] = {}
-        days_map[day][row["status"]] = row["count"]
-
-    daily_breakdown = [
-        {"date": day, **statuses} for day, statuses in sorted(days_map.items())
-    ]
-
-    # ── sync_jobs stats (normalised table) ─────────────────────────
+    # ── sync_jobs aggregations ──────────────────────────────────────
     jobs_row = conn.execute(
         """SELECT
                COUNT(*)                                              AS total_jobs,
@@ -194,54 +115,45 @@ def sync_stats(settings: Settings = Depends(get_settings)) -> dict:
                SUM(candidates_skipped)                               AS total_skipped,
                SUM(candidates_conflict)                              AS total_conflicts,
                SUM(candidates_invalid)                               AS total_invalid,
-               SUM(candidates_failed)                                AS total_failed
+               SUM(candidates_failed)                                AS total_failed,
+               SUM(candidates_total)                                 AS total_candidates,
+               MAX(started_at)                                       AS last_sync_at
            FROM sync_jobs"""
-    ).fetchone() if _table_exists(conn, "sync_jobs") else None
+    ).fetchone()
 
-    # ── sync_candidates daily breakdown ────────────────────────────
-    cand_daily = []
-    if _table_exists(conn, "sync_candidates"):
-        cand_rows = conn.execute(
-            """SELECT DATE(created_at) AS day, decision, COUNT(*) AS count
-               FROM sync_candidates
-               WHERE created_at >= ?
-               GROUP BY DATE(created_at), decision
-               ORDER BY day ASC""",
-            (thirty_days_ago,),
-        ).fetchall()
-        cand_map: dict[str, dict[str, int]] = {}
-        for row in cand_rows:
-            day = row["day"]
-            if day not in cand_map:
-                cand_map[day] = {}
-            cand_map[day][row["decision"] or "unknown"] = row["count"]
-        cand_daily = [
-            {"date": day, **statuses} for day, statuses in sorted(cand_map.items())
-        ]
+    # ── sync_candidates daily breakdown (last 30 days) ─────────────
+    thirty_days_ago = (datetime.now(UTC) - timedelta(days=30)).isoformat()
+    cand_rows = conn.execute(
+        """SELECT DATE(created_at) AS day, decision, COUNT(*) AS count
+           FROM sync_candidates
+           WHERE created_at >= ?
+           GROUP BY DATE(created_at), decision
+           ORDER BY day ASC""",
+        (thirty_days_ago,),
+    ).fetchall()
+    cand_map: dict[str, dict[str, int]] = {}
+    for row in cand_rows:
+        d = row["day"]
+        if d not in cand_map:
+            cand_map[d] = {}
+        cand_map[d][row["decision"] or "unknown"] = row["count"]
+    candidates_daily = [
+        {"date": day, **statuses} for day, statuses in sorted(cand_map.items())
+    ]
 
     result = {
-        "total_attempts":         attempt_row["total_attempts"],
-        "successful_attempts":    attempt_row["successful_attempts"],
-        "failed_attempts":        attempt_row["failed_attempts"],
-        "cumulative":             cumul,
-        "latest_summary":         latest_summary,
-        "last_sync":              last_sync_row["started_at"] if last_sync_row else None,
-        "daily_breakdown":        daily_breakdown,
+        "total_jobs":               jobs_row["total_jobs"] or 0,
+        "successful_jobs":          jobs_row["successful_jobs"] or 0,
+        "failed_jobs":              jobs_row["failed_jobs"] or 0,
+        "total_candidates":         jobs_row["total_candidates"] or 0,
+        "total_synced":             jobs_row["total_synced"] or 0,
+        "total_skipped":            jobs_row["total_skipped"] or 0,
+        "total_conflicts":          jobs_row["total_conflicts"] or 0,
+        "total_invalid":            jobs_row["total_invalid"] or 0,
+        "total_failed":             jobs_row["total_failed"] or 0,
+        "last_sync":                jobs_row["last_sync_at"],
+        "candidates_daily_breakdown": candidates_daily,
     }
-    # Append normalised-table stats if available
-    if jobs_row:
-        result["sync_jobs"] = {
-            "total_jobs":         jobs_row["total_jobs"],
-            "successful_jobs":    jobs_row["successful_jobs"],
-            "failed_jobs":        jobs_row["failed_jobs"],
-            "total_synced":       jobs_row["total_synced"] or 0,
-            "total_skipped":      jobs_row["total_skipped"] or 0,
-            "total_conflicts":    jobs_row["total_conflicts"] or 0,
-            "total_invalid":      jobs_row["total_invalid"] or 0,
-            "total_failed":       jobs_row["total_failed"] or 0,
-        }
-    if cand_daily:
-        result["candidates_daily_breakdown"] = cand_daily
     cache.set("sync_stats", result, ttl_seconds=60)
     return result
 
@@ -266,7 +178,6 @@ async def _sse_sync_generator(
             progress_callback=on_progress,
         )
         # After streaming, send the full report as a final event
-        import json
         payload = json.dumps({"type": "report", "report": report.model_dump(mode="json")})
         lines.append(f"data: {payload}\n\n")
     except ValueError as exc:
