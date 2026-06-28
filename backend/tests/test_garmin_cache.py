@@ -3,9 +3,7 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
-
-from app.storage.garmin_cache import GarminCacheStore, GARMIN_CACHE_TTL_SECONDS
-
+from app.storage.garmin_cache import GarminCacheStore
 
 # ── Fixtures ──────────────────────────────────────────────────────
 

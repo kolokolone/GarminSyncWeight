@@ -4,9 +4,7 @@ import asyncio
 import time
 
 import pytest
-
 from app.cache import TTLCache, get_cache, stale_while_revalidate
-
 
 # ── Fixtures ──────────────────────────────────────────────────────
 

@@ -7,13 +7,12 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import Any, NamedTuple
 
+from app.storage.db import init_db
+
 
 class JobResult(NamedTuple):
     run_id: str
     job_id: int
-
-from app.storage.db import init_db
-
 
 class SyncStore:
     """Sync event persistence for idempotency and audit trail."""
@@ -75,7 +74,10 @@ class SyncStore:
         ).fetchone()
         duration = None
         if started and started["started_at"]:
-            duration = (datetime.fromisoformat(now) - datetime.fromisoformat(started["started_at"])).total_seconds()
+            duration = (
+                datetime.fromisoformat(now)
+                - datetime.fromisoformat(started["started_at"])
+            ).total_seconds()
         self.conn.execute(
             """UPDATE sync_jobs
                SET completed_at = ?,

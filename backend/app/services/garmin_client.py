@@ -57,7 +57,10 @@ class GarminClient:
             return [GarminWeighIn(**item) for item in cached]
         _log().debug("Cache MISS weigh_ins %s", date_str)
         raw = self._client().get_daily_weigh_ins(date_str)
-        result = [self._parse_weigh_in(item, target_date) for item in self._extract_measurements(raw)]
+        result = [
+            self._parse_weigh_in(item, target_date)
+            for item in self._extract_measurements(raw)
+        ]
         self._cache_store.set("weigh_in", date_str, [r.model_dump(mode="json") for r in result])
         _log().debug("Cache SET  weigh_ins %s  (%d entries)", date_str, len(result))
         return result

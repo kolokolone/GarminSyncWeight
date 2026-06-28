@@ -74,7 +74,7 @@ class WithingsMeasurementStore:
     def _row_to_measurement(row: sqlite3.Row) -> BodyCompositionMeasurement:
         """Convert a DB row back to a ``BodyCompositionMeasurement``."""
         data: dict[str, Any] = {}
-        for key in row.keys():
+        for key in row.keys():  # noqa: SIM118 (sqlite3.Row is not a dict)
             value = row[key]
             if value is None:
                 data[key] = None

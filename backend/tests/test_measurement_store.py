@@ -2,14 +2,11 @@
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from app.models.withings import BodyCompositionMeasurement
 from app.storage.measurement_store import WithingsMeasurementStore
-
 
 # ── Fixtures ──────────────────────────────────────────────────────
 

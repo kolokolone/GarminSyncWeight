@@ -11,7 +11,6 @@ from pathlib import Path
 
 from app.cache import get_cache, stale_while_revalidate
 from app.config import Settings, get_settings
-from app.models.withings import BodyCompositionMeasurement
 from app.models.sync import (
     DecisionPreview,
     DedupPreview,
@@ -23,6 +22,7 @@ from app.models.sync import (
     RecentMeasurementItem,
     RecentMeasurementsResponse,
 )
+from app.models.withings import BodyCompositionMeasurement
 from app.services.deduplicator import Deduplicator
 from app.services.garmin_client import GarminClient
 from app.services.mapper import WithingsToGarminMapper
@@ -332,8 +332,14 @@ async def _compute_latest_preview(
     # Dedup info
     dedup_map = {
         "new_candidate": ("new", "Aucune mesure Garmin proche détectée pour cette date."),
-        "duplicate_exact_or_near": ("duplicate", "Mesure déjà présente dans Garmin (poids identique)."),
-        "duplicate_body_composition": ("duplicate", "Composition corporelle déjà présente dans Garmin."),
+        "duplicate_exact_or_near": (
+            "duplicate",
+            "Mesure déjà présente dans Garmin (poids identique).",
+        ),
+        "duplicate_body_composition": (
+            "duplicate",
+            "Composition corporelle déjà présente dans Garmin.",
+        ),
         "possible_duplicate": ("duplicate", "Mesure Garmin proche détectée à vérifier."),
         "conflict_same_day": ("conflict", "Mesure Garmin différente le même jour."),
         "already_synced_by_garminsync": ("duplicate", "Déjà synchronisée via GarminSyncWeight."),
@@ -428,7 +434,9 @@ async def get_recent_measurements(
 
     This is a READ-ONLY endpoint. It NEVER writes to Garmin.
     """
-    auth, wclient, parser, _mapper, _garmin, _dedup, _sync_store, meas_store = _build_services(settings)
+    auth, wclient, parser, _mapper, _garmin, _dedup, _sync_store, meas_store = (
+        _build_services(settings)
+    )
 
     withings_status = await auth.check_connection()
     if not withings_status.get("connected"):
