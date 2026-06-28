@@ -1,82 +1,121 @@
-# GarminSyncWeight v0.2.10
+<p align="center">
+  <h1 align="center">GarminSyncWeight</h1>
+</p>
+<p align="center">Pont contrôlé entre Withings Body Cardio et Garmin Connect.<br/>Lecture, vérification, déduplication — écriture uniquement si tout est valide.</p>
+<p align="center">
+  <a href="docs/architecture.md">Architecture</a> ·
+  <a href="docs/security.md">Sécurité</a> ·
+  <a href="docs/mapping_withings_garmin.md">Mapping</a> ·
+  <a href="AUDIT_GARMINSYNCWEIGHT.md">Audit</a>
+</p>
 
-Application locale pour synchroniser les mesures de poids et de composition corporelle Withings vers Garmin Connect.
+---
 
-Le flux est réel mais prudent : l’application refuse d’écrire si Withings n’est pas vérifié, si Garmin n’est pas vérifié, si la lecture préalable échoue, si la mesure est invalide, déjà présente ou en conflit.
+## Pourquoi ?
 
-## Architecture
+Garmin ne se synchronise pas avec Withings. Cette application locale fait le pont de manière **prudente et contrôlée** : elle lit vos mesures Withings, vérifie l'état de vos comptes, détecte les doublons et les conflits, puis écrit uniquement les mesures valides et nouvelles dans Garmin Connect.
 
-- Backend FastAPI : OAuth Withings, vérification Garmin, moteur de synchronisation, SQLite, logs.
-- Frontend statique local : états Withings/Garmin, lancement sync, rapports, logs.
-- Garmin : tokens et authentification via `Taxuspt/garmin_mcp` (`garmin-mcp-auth`, `garmin-mcp-auth --verify`) comme GarminToGPT.
-- Withings : OAuth2 Authorization Code, `state` CSRF, refresh token rotatif, Measure `getmeas`.
+**Aucune suppression, aucune modification.** Seulement des `add_body_composition` vérifiés et idempotents.
 
-## Données synchronisées
+### Ce qui est synchronisé
 
-Champs envoyés à Garmin via `add_body_composition` quand disponibles et validés :
+| Champ | Statut |
+|---|---|
+| `weight` (kg) | ✅ Direct |
+| `percent_fat` | ✅ Withings type 6 |
+| `bone_mass` (kg) | ✅ Withings type 88 |
+| `muscle_mass` (kg) | ✅ Withings type 76 |
+| `basal_met` | ✅ Withings |
+| `metabolic_age` | ✅ Withings |
+| `visceral_fat_rating` | ✅ Withings |
+| `bmi` | ⚠️ Calculé (poids / taille²) |
+| `percent_hydration` | ❌ Withings en kg, Garmin en % — ignoré |
 
-- `date`
-- `weight` en kg, obligatoire
-- `percent_fat`
-- `bone_mass`
-- `muscle_mass`
-- `basal_met`
-- `metabolic_age`
-- `visceral_fat_rating`
-- `bmi`
-- `percent_hydration` (converti depuis la masse d'eau Withings en kg → %)
-
-Champs ignorés : champs sans équivalent Garmin confirmé, valeurs incohérentes.
-
-## Installation locale
+## Démarrage rapide
 
 ```powershell
-cd C:\Users\domin\Desktop\GarminSyncWeight
+git clone https://github.com/dominique-m/GarminSyncWeight.git
+cd GarminSyncWeight
 uv sync
 copy .env.example .env
+# 🔴 Éditez .env avec vos identifiants Withings
+./scripts/dev.ps1
 ```
 
-Configurer `.env` :
+Ouvrez [http://127.0.0.1:8010](http://127.0.0.1:8010) — le tableau de bord vous guide pour connecter Withings et Garmin.
 
-```env
-WITHINGS_CLIENT_ID=...
-WITHINGS_CLIENT_SECRET=...
-WITHINGS_REDIRECT_URI=http://127.0.0.1:8010/api/withings/auth/callback
-WITHINGS_SCOPE=user.metrics
-GARMIN_TOKEN_DIR=%USERPROFILE%\.garminconnect
+```
+http://127.0.0.1:8010       → Tableau de bord
+http://127.0.0.1:8010/docs  → Documentation API (Swagger)
 ```
 
-Lancer :
+## Installation
+
+### Avec Docker (recommandé)
 
 ```powershell
-uv run uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8010
+copy .env.example .env
+# Éditez .env
+docker compose up --build
 ```
 
-Ouvrir : http://127.0.0.1:8010
+Volumes persistants : `data/`, `logs/`, `runtime/`, `~/.garminconnect`.
 
-## Withings OAuth
+### Sans Docker
 
-1. Créer une app sur https://developer.withings.com/dashboard/.
-2. Ajouter exactement le callback : `http://127.0.0.1:8010/api/withings/auth/callback`.
-3. Scope minimal : `user.metrics`.
-4. Cliquer sur “Connecter Withings” dans l’UI.
+```powershell
+uv sync                     # Installe les dépendances
+copy .env.example .env      # Configurez vos identifiants
+./scripts/start.ps1         # Lance le serveur (sans reload)
+./scripts/dev.ps1           # Lance avec --reload
+```
 
-Le backend stocke `userid`, `access_token`, `refresh_token`, `scope`, `token_type`, `expires_at`, `created_at`, `updated_at` dans SQLite. Avant chaque appel API, il rafraîchit le token si nécessaire et remplace le refresh token quand Withings en renvoie un nouveau.
+Prérequis : Python ≥ 3.12, [`uv`](https://docs.astral.sh/uv/).
 
-## Garmin via Taxuspt/garmin_mcp
+## Authentification
 
-Authentification recommandée :
+### Withings (OAuth2)
+
+1. Créez une app sur [developer.withings.com](https://developer.withings.com/dashboard/)
+2. Le callback doit être **exactement** `http://127.0.0.1:8010/api/withings/auth/callback`
+3. Scope requis : `user.metrics`
+4. Dans l'interface, cliquez sur **Connecter Withings**
+
+Le refresh token est rotatif — chaque renouvellement est persisté automatiquement.
+
+### Garmin (via Taxuspt/garmin_mcp)
 
 ```powershell
 uvx --python 3.12 --from git+https://github.com/Taxuspt/garmin_mcp garmin-mcp-auth
 uvx --python 3.12 --from git+https://github.com/Taxuspt/garmin_mcp garmin-mcp-auth --verify
 ```
 
-Les tokens sont persistés dans `~/.garminconnect` ou `GARMIN_TOKEN_DIR`. Le compose Docker monte ce dossier dans `/home/app/.garminconnect`.
+Les tokens sont stockés dans `~/.garminconnect`. Le mot de passe Garmin n'est **jamais** conservé par l'application.
 
-## Synchronisation
+## Utilisation
 
-API :
+### Interface web
+
+- **Tableau de bord** : état Withings/Garmin, lancement de synchronisation
+- **Historique** : mesures Withings avec statut Garmin
+- **Statistiques** : tendances poids, graisse, IMC
+- **Logs** : logs structurés JSONL avec redaction automatique
+- **Réglages** : paramètres et API admin
+
+### Ligne de commande
+
+```powershell
+# Statut
+uv run python -m backend.app.cli status
+
+# Configuration
+uv run python -m backend.app.cli check-config
+
+# Synchronisation
+uv run python -m backend.app.cli sync --start-date 2026-06-21 --end-date 2026-06-21
+```
+
+### API HTTP
 
 ```http
 POST /api/sync/run
@@ -87,43 +126,74 @@ POST /api/sync/run
 }
 ```
 
-CLI :
+Décisions possibles : `synced`, `skipped_existing`, `skipped_conflict`, `invalid`, `failed`.
 
-```powershell
-uv run python -m backend.app.cli sync --start-date 2026-06-21 --end-date 2026-06-21
+## Fonctionnement
+
+```
+Withings OAuth → WithingsClient (getmeas) → WithingsParser
+    → WithingsToGarminMapper
+    → GarminClient (lecture existante)
+    → Deduplicator (doublons, conflits)
+    → GarminClient.add_body_composition ✍️
+    → SyncStore + ReportBuilder
 ```
 
-Décisions possibles :
+La synchronisation **refuse d'écrire** si :
+- Withings ou Garmin n'est pas vérifié par appel API actif
+- La lecture Withings ou Garmin échoue
+- Le poids ou la date est absent
+- Une mesure équivalente existe déjà dans Garmin (± 0.05 kg)
+- Une mesure différente existe le même jour (± 0.2 kg → conflit)
+- La clé d'idempotence locale est déjà `synced` ou `skipped_existing`
 
-- `synced`
-- `skipped_existing`
-- `skipped_conflict`
-- `invalid`
-- `failed`
+## Configuration
 
-Les décisions sont persistées dans SQLite avec clé d’idempotence, date locale, poids, hash de payload, réponse Garmin ou erreur.
+Copiez `.env.example` vers `.env` :
 
-## Docker
+| Variable | Description | Défaut |
+|---|---|---|
+| `WITHINGS_CLIENT_ID` | ID client OAuth Withings | — |
+| `WITHINGS_CLIENT_SECRET` | Secret client Withings | — |
+| `USER_HEIGHT_M` | Taille en mètres (pour l'IMC) | — |
+| `APP_TIMEZONE` | Fuseau horaire | `Europe/Paris` |
+| `GARMIN_TOKEN_DIR` | Dossier des tokens Garmin | `~/.garminconnect` |
+| `ADMIN_API_TOKEN` | Token pour les routes admin | — |
+| `WEIGHT_DUPLICATE_EPSILON_KG` | Seuil doublon | `0.05` |
+| `WEIGHT_CONFLICT_EPSILON_KG` | Seuil conflit | `0.2` |
+
+## Développement
 
 ```powershell
-docker compose up --build
+uv sync --group dev          # Inclut pytest, ruff
+uv run ruff check backend    # Lint
+uv run pytest                # Tests (47+)
+uv run pytest -k "test_run_sync" -v  # Test spécifique
+./scripts/test.ps1           # Lint + tests
 ```
 
-Volumes :
+Le `PYTHONPATH` doit pointer vers `backend/` — les scripts le font automatiquement.
 
-- `garminsync_data:/app/data`
-- `garminsync_logs:/app/logs`
-- `garminsync_runtime:/app/runtime`
-- `garminsync_garmin:/home/app/.garminconnect`
+## Sécurité
 
-Le port est bindé sur `127.0.0.1:8010` par défaut. Ne pas exposer publiquement sans authentification forte, surtout via tunnel ou reverse proxy.
+- Bind sur `127.0.0.1` uniquement — **ne pas exposer publiquement** sans reverse proxy authentifié
+- Redaction automatique dans les logs : tokens, secrets, emails
+- Aucune suppression de données Garmin
+- Tokens Garmin isolés dans `~/.garminconnect`
+- Refresh tokens Withings persistés chiffrés dans SQLite
+- State CSRF pour le flux OAuth Withings
 
-## Vérification Garmin Connect
+[En savoir plus](docs/security.md)
 
-Après une synchronisation, vérifier dans Garmin Connect que la mesure apparaît au jour civil attendu. Relancer la même période : l’application doit classer la mesure en `skipped_existing` ou déjà traitée, sans doublon.
+## Limites
 
-## Limites connues
+- L'API Garmin Connect n'est pas publique — des changements côté Garmin peuvent casser l'intégration
+- `percent_hydration` n'est pas synchronisé (format incompatible)
+- Pas de suppression de mesures Garmin existantes
+- Pas d'authentification intégrée pour l'interface (restriction réseau recommandée)
 
-- L’écriture Garmin réelle nécessite des tokens valides et le comportement live de Garmin Connect peut changer.
-- La composition corporelle est limitée aux champs acceptés par `add_body_composition`.
-- Les tests automatisés utilisent des doubles contrôlés pour Withings/Garmin ; une validation live reste nécessaire avant usage prolongé.
+---
+
+<p align="center">
+  <sub>Construit avec FastAPI, SQLite et le SDK garminconnect.<br/>Licence MIT.</sub>
+</p>
