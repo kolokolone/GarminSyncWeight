@@ -1,6 +1,6 @@
 # Guide de maintenance du README
 
-Ce document définit comment écrire, modifier et maintenir le `README_v2.md`.
+Ce document définit comment écrire, modifier et maintenir le `README.md`.
 
 ## Objectif
 
@@ -88,9 +88,9 @@ Quand ces choses changent, le README **doit** être mis à jour :
 
 ## Convention de nommage
 
-- `README.md` — version stable actuelle
-- `README_v2.md` — nouvelle version en cours de rédaction/revue
-- Quand la v2 est validée : renommer `README.md` → `README_v1_legacy.md`, puis `README_v2.md` → `README.md`
+- `README.md` — version stable actuelle (format OpenCode-style)
+- `README_old.md` — version legacy (conservée pour référence historique)
+- Quand une refonte est nécessaire : créer `README_vN.md`, puis renommer l'ancien en `README_old.md` et le nouveau en `README.md`
 
 ## Checklist avant publication
 

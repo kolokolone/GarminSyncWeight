@@ -97,8 +97,8 @@ This works because `pythonpath = ["backend"]` in pyproject.toml or `PYTHONPATH=b
 
 ## Version note
 
-`pyproject.toml` says 0.3.1 (canonical). `README.md` header says 0.2.10 (stale).  
-Update README version when bumping pyproject.toml.
+`pyproject.toml` says 0.3.1 (canonical).  
+Update `README.md` or `backend/app/config.py` version when bumping `pyproject.toml`.
 
 ## Docs
 
