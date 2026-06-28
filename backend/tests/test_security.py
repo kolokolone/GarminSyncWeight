@@ -81,14 +81,16 @@ def test_redact_lines_list() -> None:
 def test_settings_rejects_empty_client_id() -> None:
     """Settings must allow empty Withings client ID (graceful degradation)."""
     from app.config import Settings
-    s = Settings()  # type: ignore[call-arg]
+
+    s = Settings(withings_client_id="", withings_client_secret="")  # type: ignore[call-arg]
     assert s.withings_client_id == ""
 
 
 def test_configured_flag_requires_both_id_and_secret() -> None:
     """is_configured() must require both client_id and client_secret."""
     from app.config import Settings
-    s1 = Settings()  # type: ignore[call-arg]
+
+    s1 = Settings(withings_client_id="", withings_client_secret="")  # type: ignore[call-arg]
     assert not (s1.withings_client_id and s1.withings_client_secret)
 
     s2 = Settings(withings_client_id="x", withings_client_secret="y")  # type: ignore[call-arg]
