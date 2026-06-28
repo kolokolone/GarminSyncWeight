@@ -14,6 +14,7 @@ RUN uv pip install --system . \
     && uv pip install --system "git+https://github.com/Taxuspt/garmin_mcp"
 
 COPY backend ./backend
+COPY frontend ./frontend
 
 RUN useradd --create-home --shell /usr/sbin/nologin app \
     && mkdir -p /app/data /app/logs /app/runtime/reports /home/app/.garminconnect \
