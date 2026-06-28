@@ -543,11 +543,18 @@ function renderMappingTable(preview) {
     let msg = f.message || statusLabels[f.status] || f.status;
 
     // BMI sourced from backend (structured bmi object)
-    if (f.label === "IMC" && lm?.bmi?.value != null) {
-      wvText = `${lm.bmi.value}`;
-      gvText = wvText;
-      status = "calculated";
-      msg = lm.bmi.source === "computed_backend" ? "Calculé (backend)" : msg;
+    if (f.label === "IMC") {
+      const bmiInfo = lm?.bmi;
+      if (bmiInfo?.value != null) {
+        wvText = `${bmiInfo.value}`;
+        gvText = wvText;
+        status = "calculated";
+        msg = bmiInfo.source === "computed_backend" ? "Calculé (backend)" : msg;
+      } else if (bmiInfo?.inputs?.height_cm == null) {
+        // Height not configured — BMI cannot be computed
+        status = "unsupported";
+        msg = "Hauteur non configurée (USER_HEIGHT_M)";
+      }
     }
 
     const wv = document.createElement("td"); wv.className = "field-withings"; wv.textContent = wvText;
