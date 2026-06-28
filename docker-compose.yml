@@ -2,7 +2,7 @@ services:
   garminsync:
     image: garminsyncweight:0.3.5
     build: .
-    container_name: garminsync
+    container_name: garminsyncweight
     env_file:
       - .env
     ports:
