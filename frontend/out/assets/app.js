@@ -27,6 +27,12 @@ async function api(path, opts = {}) {
   return body;
 }
 
+function latestUrl(days = 30) {
+  let url = `/api/measurements/latest?days=${days}`;
+  if (state._heightCm && state._heightCm > 0) url += `&height_cm=${state._heightCm}`;
+  return url;
+}
+
 /* ── SPA routing (flat pages) ────────────────────────────────── */
 
 const PAGE_URLS = {
@@ -725,7 +731,7 @@ function renderSyncActions(preview) {
     try {
       state.preview = null;
       render();
-      state.preview = await api("/api/measurements/latest?days=30");
+      state.preview = await api(latestUrl());
       state.recent = await api("/api/measurements/recent?days=30");
     } catch {}
     render();
@@ -852,7 +858,7 @@ async function runSync(mode) {
 
 async function finishSync(startDate, endDate) {
   await safeRefresh();
-  try { state.preview = await api("/api/measurements/latest?days=30"); } catch {}
+  try { state.preview = await api(latestUrl()); } catch {}
   try { state.recent = await api("/api/measurements/recent?days=30"); } catch {}
 
   state._showProgress = false;
@@ -1622,7 +1628,7 @@ async function loadDashboardData() {
     const t = setTimeout(() => ac.abort(), 15000);
 
     const [previewResult, recentResult] = await Promise.allSettled([
-      fetch("/api/measurements/latest?days=30", { signal: ac.signal }).then(r => r.json()),
+      fetch(latestUrl(), { signal: ac.signal }).then(r => r.json()),
       fetch("/api/measurements/recent?days=30", { signal: ac.signal }).then(r => r.json()),
     ]);
 
@@ -1770,7 +1776,7 @@ function renderHistorique() {
             });
             state.syncResult = result;
             await safeRefresh();
-            try { state.preview = await api("/api/measurements/latest?days=30"); } catch {}
+            try { state.preview = await api(latestUrl()); } catch {}
             // Refresh history
             await loadHistory();
           } catch (err) {

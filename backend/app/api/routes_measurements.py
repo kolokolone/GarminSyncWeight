@@ -7,6 +7,7 @@ for the Dashboard UI.
 
 import json
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 
 from app.cache import get_cache, stale_while_revalidate
@@ -218,8 +219,13 @@ async def _compute_latest_preview(
     days: int,
     settings: Settings,
     force_refresh: bool = False,
+    height_cm: float | None = None,
 ) -> MeasurementPreviewResponse:
     """Full computation of the /latest preview (extracted for caching)."""
+    # ── Resolve height for BMI computation ───────────────────────
+    effective_height_m = settings.user_height_m
+    if effective_height_m is None and height_cm is not None and height_cm > 0:
+        effective_height_m = height_cm / 100.0
     auth, wclient, parser, mapper, garmin, dedup, sync_store, meas_store = _build_services(settings)
 
     # ── Check Withings ──────────────────────────────────────────
@@ -292,6 +298,17 @@ async def _compute_latest_preview(
 
     # ── Build response ──────────────────────────────────────────
     device = latest.source_device_id or "Body Cardio+"
+
+    # BMI computation (uses effective_height_m = settings.user_height_m
+    # or height_cm/100 from request)
+    bmi_value = latest.bmi  # from parser (uses settings.user_height_m)
+    bmi_source = "computed_backend"
+    effective_height_cm = int(effective_height_m * 100) if effective_height_m else None
+    if bmi_value is None and effective_height_m and latest.weight_kg and latest.weight_kg > 0:
+        h = Decimal(str(effective_height_m))
+        bmi_value = (latest.weight_kg / (h * h)).quantize(Decimal("0.1"))
+        bmi_source = "computed_backend"
+
     latest_measurement_data = {
         "measured_at": latest.measured_at_local.isoformat() if latest.measured_at_local else None,
         "source": latest.source,
@@ -302,11 +319,11 @@ async def _compute_latest_preview(
         "bone_mass_kg": float(latest.bone_mass_kg) if latest.bone_mass_kg else None,
         "hydration_mass_kg": float(latest.hydration_mass_kg) if latest.hydration_mass_kg else None,
         "bmi": {
-            "value": float(latest.bmi) if latest.bmi else None,
-            "source": "computed_backend",  # BMI always computed by backend from height+weight
+            "value": float(bmi_value) if bmi_value else None,
+            "source": bmi_source,
             "inputs": {
                 "weight_kg": float(latest.weight_kg) if latest.weight_kg else None,
-                "height_cm": int(settings.user_height_m * 100) if settings.user_height_m else None,
+                "height_cm": effective_height_cm,
             },
         },
         "basal_metabolic_rate_kcal": float(latest.basal_met) if latest.basal_met else None,
@@ -408,6 +425,9 @@ async def _compute_latest_preview(
 async def get_latest_measurement_preview(
     days: int = Query(default=30, ge=1, le=365),
     force_refresh: bool = Query(default=False),
+    height_cm: float | None = Query(
+        default=None, ge=50, le=300,
+        description="Height in cm (fallback when USER_HEIGHT_M not set)"),
     settings: Settings = Depends(get_settings),
 ) -> MeasurementPreviewResponse:
     """Preview the latest Withings measurement and its planned Garmin mapping.
@@ -416,15 +436,19 @@ async def get_latest_measurement_preview(
 
     Results are cached with stale-while-revalidate (30s fresh, 5min stale).
     Set ``force_refresh=true`` to bypass the cache and fetch fresh data.
+
+    If ``height_cm`` is provided and ``USER_HEIGHT_M`` is not configured,
+    BMI will be computed from this value.
     """
-    cache_key = f"latest:{days}"
+    cache_key = f"latest:{days}:h={height_cm or 'default'}"
 
     if force_refresh:
         get_cache().invalidate(cache_key)
-        return await _compute_latest_preview(days, settings, force_refresh=True)
+        return await _compute_latest_preview(
+            days, settings, force_refresh=True, height_cm=height_cm)
 
     async def _fetch():
-        return await _compute_latest_preview(days, settings)
+        return await _compute_latest_preview(days, settings, height_cm=height_cm)
 
     result = await stale_while_revalidate(
         cache_key, _fetch, ttl=30.0, stale_ttl=300.0,
