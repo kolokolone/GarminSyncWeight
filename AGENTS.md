@@ -18,22 +18,24 @@ When running manually: `uv run uvicorn app.main:app --app-dir backend --host 127
 ## Commands
 
 | Purpose | Command |
-|---|---|
+|---|---|---|
 | Install deps (prod) | `uv sync` |
 | Install deps (dev) | `uv sync --group dev` |
 | Lint | `uv run ruff check backend` |
 | Test (all) | `uv run pytest` |
+| Test (all, Windows fallback) | `$env:PYTHONPATH = "backend"; python -m pytest` |
 | Test (one file) | `uv run pytest backend/tests/test_sync.py -v` |
 | Test (filter) | `uv run pytest -k "test_run_sync" -v` |
 | Run server (prod) | `./scripts/start.ps1` or `start.bat` |
 | Run server (dev) | `./scripts/dev.ps1` (--reload) |
 | CLI status | `uv run python -m backend.app.cli status` |
 | CLI sync | `uv run python -m backend.app.cli sync --start-date 2026-06-21 --end-date 2026-06-21` |
-| Script sync | `./scripts/sync.ps1 -StartDate 2026-06-21 -EndDate 2026-06-21` |
-| Garmin auth | `uvx --python 3.12 --from git+https://github.com/Taxuspt/garmin_mcp garmin-mcp-auth` |
-| Garmin verify | `uvx --python 3.12 --from git+https://github.com/Taxuspt/garmin_mcp garmin-mcp-auth --verify` |
 | Docker build+run | `docker compose up --build` |
 | CI check | `./scripts/test.ps1` (ruff + pytest) |
+| Health check | `curl http://127.0.0.1:8010/api/healthz` |
+
+> **Windows note**: `uv run pytest` may fail with "uv trampoline failed to canonicalize script path".
+> The fallback `$env:PYTHONPATH = "backend"; python -m pytest` always works.
 
 ## Architecture
 
@@ -90,6 +92,17 @@ All imports use `app.` prefix (not `backend.app.`):
 
 This works because `pythonpath = ["backend"]` in `pyproject.toml` (`[tool.pytest.ini_options]`) or `PYTHONPATH=backend` env var.
 
+## Frontend golden rule
+
+> **The backend is the single source of truth. The frontend is display-only.**
+
+- Never compute business logic in `frontend/out/assets/app.js` (BMI, dedup decisions, period math).
+- Never call Garmin or Withings APIs directly from the frontend.
+- Never store secrets (passwords, OTP) in `localStorage`.
+- If the backend already computes a value (e.g. BMI in `mapper.py`), the frontend reads it from the API response — never recomputes it.
+
+Full rules: `docs/ARCHITECTURE_FRONTEND_BACKEND.md`.
+
 ## Cache behavior (important for tests)
 
 `cache.py` provides three layers:
@@ -134,8 +147,9 @@ Key helpers in conftest:
 
 ## Key constraints
 
-- **Never delete or modify Garmin data.** This app only writes new `add_body_composition` calls.
-- **Settings is frozen.** `config.Settings` has `frozen=True`. For tests, construct `Settings(**overrides)`.
+- **Ruff:** `line-length = 100`, targets `py312`, rules `["E", "F", "I", "UP", "B", "SIM"]`, ignores `B008`.
+- **Settings loads from both** `.env` and `config/.env` (latter for Docker). Constructor is frozen — use `Settings(**overrides)` for tests.
+- **Never delete or modify Garmin data.**
 - **Garmin client test injection.** `GarminClient` accepts `test_data` kwarg and `set_test_data()`. Tests inject fixtures directly — never mock at the garminconnect level.
 - **Dedup idempotency.** `sync_candidates` table is the source of truth. Only `synced` and `skipped_existing` decisions block re-sync. `failed`, `skipped_conflict`, `invalid` do NOT block re-sync.
 - **`sync_decisions` table** is a detailed audit log of each dedup decision (separate from `sync_candidates.decision`). Both tables must stay consistent.
@@ -145,6 +159,12 @@ Key helpers in conftest:
 - **Port binding.** Default `127.0.0.1:8010`. Never expose publicly without external auth.
 - **Withings scope `user.metrics` is mandatory.** Reject configuration without it.
 - **Per-day measurement strategy.** Controlled by `WITHINGS_PER_DAY_STRATEGY` env var: `latest_per_day` (default), `earliest_per_day`, or `all_if_distinct`.
+- **Garmin OTP flow (2 steps).** `POST /api/garmin/auth/login` supports a two-step MFA flow:
+  1. Send `email` + `password` → returns `needs_otp: true` + `auth_session_id`
+  2. Send `auth_session_id` + `otp` → completes authentication
+  The legacy single-call (`email` + `password` + `otp` in one request) still works for backward compatibility.
+  Sessions are in-memory (TTL 5 min), not shared between workers.
+  `POST /api/garmin/auth/verify` only checks token validity — never submits OTP.
 - **Garmin lookback/forward windows.** Configurable via `GARMIN_LOOKBACK_DAYS` (default 7) and `GARMIN_LOOKAHEAD_DAYS` (default 1). Sync reads existing Garmin data within this window to detect duplicates/conflicts.
 - **Docker binding nuance.** Dockerfile uvicorn binds `0.0.0.0:8010`, but docker-compose maps to `127.0.0.1:8010`. The compose mapping is the effective bind — never remove the `127.0.0.1` restriction in compose.
 
@@ -159,9 +179,11 @@ docs/DOCKER.md, and frontend/out/index.html (version badge).
 - `docs/README_GUIDE.md` — README maintenance rules
 - `docs/architecture.md` — full component reference
 - `docs/ARCHITECTURE_FRONTEND_BACKEND.md` — frontend/backend separation rules and OTP flow
+- `docs/agent-workflow.md` — two-agent workflow (brainstorm → dev) using `agents/` directory
 - `docs/security.md` — threat model and redaction rules
 - `docs/mapping_withings_garmin.md` — field mapping decisions and rationale
 - `docs/UI_STYLE_GUIDE.md` — frontend conventions
+- `docs/DOCKER.md` — Docker deployment and healthcheck setup
 
 ## Utility scripts (non-runtime)
 
