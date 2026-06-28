@@ -301,7 +301,14 @@ async def _compute_latest_preview(
         "muscle_mass_kg": float(latest.muscle_mass_kg) if latest.muscle_mass_kg else None,
         "bone_mass_kg": float(latest.bone_mass_kg) if latest.bone_mass_kg else None,
         "hydration_mass_kg": float(latest.hydration_mass_kg) if latest.hydration_mass_kg else None,
-        "bmi": float(latest.bmi) if latest.bmi else None,
+        "bmi": {
+            "value": float(latest.bmi) if latest.bmi else None,
+            "source": "computed_backend",  # BMI always computed by backend from height+weight
+            "inputs": {
+                "weight_kg": float(latest.weight_kg) if latest.weight_kg else None,
+                "height_cm": int(settings.user_height_m * 100) if settings.user_height_m else None,
+            },
+        },
         "basal_metabolic_rate_kcal": float(latest.basal_met) if latest.basal_met else None,
         "metabolic_age": latest.metabolic_age,
         "visceral_fat_rating": latest.visceral_fat_rating,
@@ -568,6 +575,8 @@ async def get_measurement_history(
             source_measure_group_id=measurement.source_measure_group_id,
             garmin_status="unchecked",
             decision="unchecked",
+            bmi=float(candidate.bmi) if candidate and candidate.bmi else None,
+            bmi_source="computed_backend" if candidate and candidate.bmi else None,
         )
 
         if candidate and garmin_available:

@@ -72,7 +72,7 @@ class SyncReport(BaseModel):
     """Complete controlled sync report."""
 
     mode: str = "sync"
-    period: dict[str, str] = {}
+    period: dict[str, Any] = {}
     prerequisites: dict[str, Any] = {}
     withings: dict[str, Any] = {}
     garmin: dict[str, Any] = {}
@@ -189,6 +189,8 @@ class HistoryMeasurementItem(BaseModel):
     sync_event_status: str | None = None
     last_error: str | None = None
     warning_count: int = 0
+    bmi: float | None = None
+    bmi_source: str | None = None  # "withings" | "computed_backend"
 
 
 class HistoryMeasurementsSummary(BaseModel):

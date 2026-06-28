@@ -63,6 +63,7 @@ class SyncEngine:
         start_date: str,
         end_date: str,
         tz_name: str | None = None,
+        period: str | None = None,
         progress_callback: collections.abc.Callable[[str], None] | None = None,
     ) -> SyncReport:
         """Run a real, guarded, idempotent synchronization.
@@ -71,10 +72,7 @@ class SyncEngine:
         summary after each candidate is processed (for SSE streaming).
         """
         tz = self._load_timezone(tz_name or self._settings.app_timezone)
-        start_day = self._parse_date(start_date)
-        end_day = self._parse_date(end_date)
-        if end_day < start_day:
-            raise ValueError("end_date must be greater than or equal to start_date")
+        start_day, end_day = self._resolve_period(start_date, end_date, period, tz)
 
         jr = self._sync_store.create_job(start_date, end_date, tz_name)
         run_id = jr.run_id
@@ -150,7 +148,14 @@ class SyncEngine:
             summary.warnings_count = sum(len(c.warnings) for c in report_candidates)
 
             report = SyncReport(
-                period={"start_date": start_date, "end_date": end_date, "timezone": str(tz)},
+                period={
+                    "requested_start": start_date,
+                    "requested_end": end_date,
+                    "requested_period": period,
+                    "resolved_start": start_day.isoformat(),
+                    "resolved_end": end_day.isoformat(),
+                    "timezone": str(tz),
+                },
                 prerequisites=prerequisites,
                 withings={
                     "raw_groups_count": len(withings_raw_groups),
@@ -414,6 +419,36 @@ class SyncEngine:
             return datetime.strptime(value, "%Y-%m-%d").date()
         except ValueError as exc:
             raise ValueError(f"Invalid date format: {value}. Expected YYYY-MM-DD.") from exc
+
+    @staticmethod
+    def _resolve_period(
+        start_date: str, end_date: str, period: str | None, tz: tzinfo,
+    ) -> tuple[date, date]:
+        """Resolve and validate the sync period.
+
+        When *period* is a named window ("1d", "7d", "30d"), dates are
+        computed relative to today in the target timezone.  Otherwise
+        the literal *start_date* / *end_date* strings are parsed.
+        """
+        today = datetime.now(tz).date()
+        if period and period != "custom":
+            days = {"1d": 1, "7d": 7, "30d": 30}.get(period)
+            if days is None:
+                raise ValueError(
+                    f"Période inconnue: {period}. Valeurs acceptées: 1d, 7d, 30d"
+                )
+            start_day = today - timedelta(days=days - 1)
+            end_day = today
+        else:
+            start_day = SyncEngine._parse_date(start_date)
+            end_day = SyncEngine._parse_date(end_date)
+        if end_day < start_day:
+            raise ValueError("La date de fin doit être postérieure ou égale à la date de début")
+        if end_day > today + timedelta(days=1):
+            raise ValueError("La date de fin ne peut pas être dans le futur")
+        if (end_day - start_day).days > 365:
+            raise ValueError("La période ne peut pas excéder 365 jours")
+        return start_day, end_day
 
     @staticmethod
     def _load_timezone(tz_name: str) -> tzinfo:

@@ -150,13 +150,15 @@ Key helpers in conftest:
 
 ## Version note
 
-`pyproject.toml` version 0.3.5 is canonical. Also hardcoded in `config.py` (`app_version`).
-When bumping: update all three: `pyproject.toml`, `backend/app/config.py`, and `README.md`.
+`pyproject.toml` version 0.3.7 is canonical. Also hardcoded in `config.py` (`app_version`).
+When bumping: update pyproject.toml, backend/app/config.py, README.md,
+docs/DOCKER.md, and frontend/out/index.html (version badge).
 
 ## Docs
 
 - `docs/README_GUIDE.md` — README maintenance rules
 - `docs/architecture.md` — full component reference
+- `docs/ARCHITECTURE_FRONTEND_BACKEND.md` — frontend/backend separation rules and OTP flow
 - `docs/security.md` — threat model and redaction rules
 - `docs/mapping_withings_garmin.md` — field mapping decisions and rationale
 - `docs/UI_STYLE_GUIDE.md` — frontend conventions

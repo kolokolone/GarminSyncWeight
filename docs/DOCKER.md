@@ -1,7 +1,7 @@
 # Déploiement Docker — GarminSyncWeight
 
 Documentation complète pour déployer GarminSyncWeight avec Docker Compose.
-Dernière mise à jour : version 0.3.6.
+Dernière mise à jour : version 0.3.7.
 
 ## Prérequis
 
@@ -176,7 +176,7 @@ curl http://IP_DU_SERVEUR:8010/api/healthz
 
 # Vérifier le statut métier (interface utilisateur)
 curl http://IP_DU_SERVEUR:8010/api/status
-# → {"app_name":"GarminSyncWeight","version":"0.3.6","state":"ready",...}
+# → {"app_name":"GarminSyncWeight","version":"0.3.7","state":"ready",...}
 ```
 
 **Important** : Le conteneur ne sera jamais marqué `unhealthy` parce que Withings ou Garmin est temporairement indisponible. Si le healthcheck échoue, c'est un problème de déploiement (dossier manquant, application crashée).
@@ -197,7 +197,7 @@ docker compose ps
 Pour figer une version spécifique, remplacez `latest` par un tag de version dans `docker-compose.yml` :
 
 ```yaml
-image: ghcr.io/kolokolone/garminsyncweight:0.3.6
+image: ghcr.io/kolokolone/garminsyncweight:0.3.7
 ```
 
 ## Sauvegarde et restauration

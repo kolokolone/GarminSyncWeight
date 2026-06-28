@@ -43,6 +43,7 @@ class SyncRequest(BaseModel):
     start_date: str
     end_date: str
     timezone: str | None = None
+    period: str | None = None  # "1d", "7d", "30d", "custom"
 
 
 @router.post("/run", response_model=SyncReport)
@@ -58,6 +59,7 @@ async def run_sync(
             start_date=body.start_date,
             end_date=body.end_date,
             tz_name=body.timezone,
+            period=body.period,
         )
         # Invalidate cache after successful sync so next read is fresh
         get_cache().invalidate_all()
@@ -164,7 +166,8 @@ def sync_stats(settings: Settings = Depends(get_settings)) -> dict:
 # ── SSE streaming endpoint ──────────────────────────────────────
 
 async def _sse_sync_generator(
-    start_date: str, end_date: str, tz_name: str | None, settings: Settings,
+    start_date: str, end_date: str, tz_name: str | None, period: str | None,
+    settings: Settings,
 ):
     """Async generator that runs sync and yields SSE `data:` lines."""
     engine = _build_engine(settings)
@@ -178,6 +181,7 @@ async def _sse_sync_generator(
             start_date=start_date,
             end_date=end_date,
             tz_name=tz_name,
+            period=period,
             progress_callback=on_progress,
         )
         # After streaming, send the full report as a final event
@@ -203,6 +207,7 @@ async def sync_stream(
     start_date: str = Query(..., description="Start date YYYY-MM-DD"),
     end_date: str = Query(..., description="End date YYYY-MM-DD"),
     timezone: str | None = Query(default=None, description="IANA timezone name"),
+    period: str | None = Query(default=None, description="Named period: 1d, 7d, 30d"),
     settings: Settings = Depends(get_settings),
     _admin: None = Depends(verify_admin_token),
 ) -> StreamingResponse:
@@ -218,7 +223,7 @@ async def sync_stream(
       - ``{"type":"report", "report": {...}}`` — final SyncReport
     """
     return StreamingResponse(
-        _sse_sync_generator(start_date, end_date, timezone, settings),
+        _sse_sync_generator(start_date, end_date, timezone, period, settings),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

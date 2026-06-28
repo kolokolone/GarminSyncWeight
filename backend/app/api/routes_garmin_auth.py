@@ -31,8 +31,13 @@ def login(
     auth: GarminAuthService = Depends(_get_garmin_auth),
     _admin: None = Depends(verify_admin_token),
 ) -> GarminAuthResult:
-    """Start or complete Garmin MCP authentication."""
-    return auth.login(payload.email, payload.password, payload.otp)
+    """Start or complete Garmin MCP authentication.
+
+    Two-step MFA flow:
+    1. POST {email, password} → response with auth_session_id (needs_otp=True)
+    2. POST {auth_session_id, otp} → complete authentication
+    """
+    return auth.login(payload.email, payload.password, payload.otp, payload.auth_session_id)
 
 
 @router.post("/verify", response_model=GarminAuthStatus)

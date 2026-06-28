@@ -531,33 +531,23 @@ function renderMappingTable(preview) {
     unsupported: "Non supporté",
   };
 
-  // BMI calculé localement si Withings ne le fournit pas
   const lm = preview.latest_measurement;
-  const localBmi = (() => {
-    if (lm?.weight_kg == null) return null;
-    const hCm = state._heightCm;
-    if (hCm && hCm > 0) {
-      const hM = hCm / 100;
-      return Math.round((lm.weight_kg / (hM * hM)) * 10) / 10;
-    }
-    return null;
-  })();
 
   for (const f of fields) {
     const row = document.createElement("tr");
     const label = document.createElement("td"); label.className = "field-label"; label.textContent = f.label;
 
-    // Calcul local IMC si manquant
     let wvText = f.withings_value || "—";
     let gvText = f.garmin_value || "—";
     let status = f.status;
     let msg = f.message || statusLabels[f.status] || f.status;
 
-    if (f.label === "IMC" && !f.withings_value && localBmi != null) {
-      wvText = `${localBmi}`;
+    // BMI sourced from backend (structured bmi object)
+    if (f.label === "IMC" && lm?.bmi?.value != null) {
+      wvText = `${lm.bmi.value}`;
       gvText = wvText;
       status = "calculated";
-      msg = "Calculé (taille + poids)";
+      msg = lm.bmi.source === "computed_backend" ? "Calculé (backend)" : msg;
     }
 
     const wv = document.createElement("td"); wv.className = "field-withings"; wv.textContent = wvText;
@@ -706,14 +696,11 @@ function renderSyncActions(preview) {
   }
   blockB.append(picker);
 
-  // Period date summary
+  // Period info — display from backend or show selected days
   const periodSummary = document.createElement("div");
   periodSummary.className = "sync-period-summary";
-  const pEnd = getLocalDate();
-  const pStart = new Date(Date.now() - (state._periodDays - 1) * 86400000);
-  const pStartStr = pStart.toISOString().slice(0, 10);
-  const fmt = (s) => { const d = new Date(s + "T00:00:00"); return d.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" }); };
-  periodSummary.textContent = `Période sélectionnée : ${fmt(pStartStr)} → ${fmt(pEnd)}`;
+  const days = state._periodDays || 1;
+  periodSummary.textContent = `Période : ${days} jour${days > 1 ? "s" : ""}`;
   blockB.append(periodSummary);
 
   const periodSyncBtn = document.createElement("button");
@@ -754,20 +741,23 @@ async function runSync(mode) {
   state._syncLog = [];
   render();
 
-  let startDate, endDate;
+  let startDate, endDate, period;
   if (mode === "latest") {
     const previewDate = state.preview?.latest_measurement?.measured_at;
     startDate = previewDate ? previewDate.slice(0, 10) : getLocalDate();
     endDate = startDate;
   } else {
-    endDate = getLocalDate();
+    // Send period instead of computing dates locally
     const days = state._periodDays || 1;
-    const s = new Date(Date.now() - (days - 1) * 86400000);
-    startDate = s.toISOString().slice(0, 10);
+    const periodMap = { 1: "1d", 7: "7d", 30: "30d" };
+    period = periodMap[days] || "custom";
+    endDate = getLocalDate();
+    startDate = endDate;
   }
 
   // Open SSE stream
   const params = new URLSearchParams({ start_date: startDate, end_date: endDate, timezone: "Europe/Paris" });
+  if (period) params.set("period", period);
   const es = new EventSource(`/api/sync/stream?${params}`);
 
   let closed = false;
@@ -1225,15 +1215,8 @@ function renderCompactPreview(preview) {
     if (lm.muscle_mass_kg != null) tiles.push(["Masse musculaire", lm.muscle_mass_kg, "kg"]);
     if (lm.bone_mass_kg != null) tiles.push(["Masse osseuse", lm.bone_mass_kg, "kg"]);
 
-    // BMI : calcul local depuis la taille stockée + poids
-    const hCm = state._heightCm;
-    if (hCm && hCm > 0) {
-      const hM = hCm / 100;
-      const bmi = lm.weight_kg / (hM * hM);
-      tiles.push(["IMC", Math.round(bmi * 10) / 10]);
-    } else if (lm.bmi != null) {
-      tiles.push(["IMC", lm.bmi]);
-    }
+    // BMI : depuis le backend (objet structuré bmi.value)
+    if (lm.bmi?.value != null) tiles.push(["IMC", lm.bmi.value]);
 
     if (lm.basal_metabolic_rate_kcal != null) tiles.push(["Métabo. basal", lm.basal_metabolic_rate_kcal, "kcal"]);
     if (lm.metabolic_age != null) tiles.push(["Âge métabo.", lm.metabolic_age, "ans"]);
@@ -1439,13 +1422,10 @@ function renderCompactSyncPanel(preview) {
   blockB.append(picker);
 
   // Period summary
-  const pEnd = getLocalDate();
-  const pStart = new Date(Date.now() - (state._periodDays - 1) * 86400000);
-  const pStartStr = pStart.toISOString().slice(0, 10);
-  const fmt = (s) => { const d = new Date(s + "T00:00:00"); return d.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" }); };
+  const days = state._periodDays || 1;
   const periodSummary = document.createElement("div");
   periodSummary.className = "sync-period-summary";
-  periodSummary.textContent = `Période sélectionnée : ${fmt(pStartStr)} → ${fmt(pEnd)}`;
+  periodSummary.textContent = `Période : ${days} jour${days > 1 ? "s" : ""}`;
   blockB.append(periodSummary);
 
   const periodSyncBtn = document.createElement("button");
@@ -2023,39 +2003,86 @@ Dernière vérification: ${w.message || "—"}</pre></div>`;
   }, "button"));
 
   if (!g.token_valid) {
-    // Login form
+    // Login form (step 1: email + password)
     const loginForm = document.createElement("div");
     loginForm.className = "form";
     loginForm.style.marginTop = "12px";
     loginForm.innerHTML = `
       <label>Email Garmin<input id="g-email" autocomplete="username" /></label>
       <label>Mot de passe<input id="g-pass" type="password" autocomplete="current-password" /></label>
-      <label>Code OTP (si MFA)<input id="g-otp" autocomplete="one-time-code" /></label>
       <div class="actions">
         <button id="g-login-btn">Connecter Garmin</button>
         <button id="g-assisted-btn" class="secondary">Assisté</button>
       </div>
       <textarea id="g-output" readonly style="min-height:60px"></textarea>
     `;
+    // OTP block (step 2 — hidden by default)
+    const otpBlock = document.createElement("div");
+    otpBlock.id = "g-otp-block";
+    otpBlock.style.display = "none";
+    otpBlock.style.marginTop = "12px";
+    otpBlock.innerHTML = `
+      <p style="color:var(--amber);font-size:13px">Garmin demande un code de vérification. Saisis le code reçu, puis valide la connexion.</p>
+      <label>Code OTP Garmin<input id="g-otp" autocomplete="one-time-code" /></label>
+      <button id="g-otp-btn">Valider le code OTP et connecter Garmin</button>
+      <p id="g-otp-error" style="color:var(--red);font-size:12px;display:none"></p>
+    `;
+    loginForm.append(otpBlock);
     gCard.append(loginForm);
 
+    let _otpSessionId = null;
+
     setTimeout(() => {
+      // Step 1: send email + password, detect MFA
       $("#g-login-btn")?.addEventListener("click", async () => {
         const out = $("#g-output");
+        try {
+          const email = $("#g-email").value || null;
+          const pass = $("#g-pass").value || null;
+          const r = await api("/api/garmin/auth/login", {
+            method: "POST",
+            body: JSON.stringify({ email, password: pass }),
+          });
+          out.value = r.message || JSON.stringify(r, null, 2);
+          if (r.needs_otp && r.auth_session_id) {
+            _otpSessionId = r.auth_session_id;
+            const ob = document.getElementById("g-otp-block");
+            if (ob) ob.style.display = "block";
+          } else {
+            await safeRefresh();
+            render();
+          }
+        } catch (e) { out.value = e.message; }
+      });
+
+      // Step 2: send auth_session_id + OTP
+      $("#g-otp-btn")?.addEventListener("click", async () => {
+        const out = $("#g-output");
+        const err = $("#g-otp-error");
         try {
           const r = await api("/api/garmin/auth/login", {
             method: "POST",
             body: JSON.stringify({
-              email: $("#g-email").value || null,
-              password: $("#g-pass").value || null,
+              auth_session_id: _otpSessionId,
               otp: $("#g-otp").value || null,
             }),
           });
           out.value = r.message || JSON.stringify(r, null, 2);
-          await safeRefresh();
-          render();
-        } catch (e) { out.value = e.message; }
+          if (r.ok) {
+            const ob = document.getElementById("g-otp-block");
+            if (ob) ob.style.display = "none";
+            if (err) err.style.display = "none";
+            await safeRefresh();
+            render();
+          } else {
+            if (err) { err.textContent = r.message; err.style.display = "block"; }
+          }
+        } catch (e) {
+          out.value = e.message;
+          if (err) { err.textContent = e.message; err.style.display = "block"; }
+        }
       });
+
       $("#g-assisted-btn")?.addEventListener("click", async () => {
         const out = $("#g-output");
         try {

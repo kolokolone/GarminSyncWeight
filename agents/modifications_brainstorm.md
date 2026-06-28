@@ -2,26 +2,64 @@
 
 ## Résumé
 
-Deux modifications : (1) ajout d'un bouton "Sync Withings" sur la page Historique pour forcer le rafraîchissement des données depuis Withings, avec rafraîchissement automatique si la dernière sync date de plus de 2 jours — toute la logique de décision (quand rafraîchir, vérifier la fraîcheur) est dans le backend, le frontend ne fait qu'appeler des endpoints et afficher ; (2) déplacement de la version `v0.3.1` dans la barre de navigation pour qu'elle s'affiche à droite du titre "GarminSyncWeight — Sync locale et contrôlée", alignée verticalement.
+Audit complet de la séparation frontend/backend de GarminSyncWeight. Trois violations critiques découvertes : (1) le calcul de l'IMC est fait en double dans le frontend (`renderMappingTable` et `renderCompactPreview` ligne 1229-1234) alors que le backend le calcule déjà dans `mapper.py`, (2) les dates de période de synchronisation sont calculées côté frontend (`runSync` ligne 765-767) sans validation backend, et (3) le flux OTP Garmin est confus — le champ OTP est toujours visible dans le formulaire, aucun bouton "Valider l'OTP" dédié n'existe, et le backend relance tout le processus `garmin-mcp-auth` à chaque tentative. La navigation frontend est déjà cohérente (Tableau de bord / Historique / Statistiques / Réglages / Logs). Le `/api/status` est correctement caché 60s avec `stale_while_revalidate`. `docs/ARCHITECTURE_FRONTEND_BACKEND.md` n'existe pas et doit être créée.
 
 ---
 
 ## Demande originale
 
 ```
-## je viens de remarquer que je n'ai pas de bouton pour faire une synchronisation avec withings (obtenir les nouvelles données depuis Withings): 
-- je veux ajouter un bouton qui permet de synchroniser les données depuis winthings :
-    - idéalement ajouter ce bouton sur la page /historique tout en bas juste avant le bouton "Vérifier les statuts Garmin" et sur la meme ligne,
-- ajouter une synchronisation automatique avec withings (pour obtenir les nouvelles données) si pas de synchronisation faite depuis > 2jours; 
-
-## Concernant le titre dans la barre tout en haut : 
-- il y a actuellement écrit : "GS
-GarminSyncWeight
-Sync locale et contrôlée
-v0.3.0",
-- est-ce qu'il est possible de déplacer la version juste à droite de "GarminSyncWeight
-Sync locale et contrôlée" et biensur tout doit rester centré verticalement comme c'est actuellement; 
+Tu dois auditer puis corriger l'architecture de l'application GarminSyncWeight afin de garantir une séparation nette entre backend et frontend.
+[... voir agents/modification.txt pour le texte complet ...]
 ```
+
+---
+
+## État des lieux de l'audit
+
+### Ce que le backend fait déjà (✅ correct)
+
+- **Sync engine** (`sync_engine.py` L61-203) : orchestre toute la sync (check → read → dedupe → write → report) ✅
+- **Mapper** (`mapper.py` L98-113) : calcule l'IMC (`weight / height²`) avec `quantize(Decimal("0.1"))`, priorise la valeur Withings si présente ✅
+- **Parser** (`withings_parser.py` L120-126) : calcule aussi l'IMC dans `BodyCompositionMeasurement.bmi` ✅
+- **Deduplicator** (`deduplicator.py`) : toute la logique de déduplication ✅
+- **Period validation** (`sync_engine.py` L76-77) : `if end_day < start_day: raise ValueError` ✅
+- **Timezones** (`sync_engine.py` L73, L428-430) : normalisation timezone ✅
+- **All external API calls** : Withings et Garmin sont appelés exclusivement côté backend ✅
+- **Report generation** (`report_builder.py`) : backend uniquement ✅
+- **SSE events** (`routes_sync.py` L166-198, `sync_engine.py` L88-196) : événements qualifiés (`start`, `parsed`, `garmin_fetched`, `candidate`, `complete`, `error`, `report`) ✅
+- **`/api/status` caching** (`routes_status.py` L108) : caché 60s ✅
+
+### Ce que le frontend fait à tort (❌ violations)
+
+1. **Calcul IMC** — `app.js` L536-544 (`renderMappingTable`) et L1229-1234 (`renderCompactPreview`) :
+   ```javascript
+   const hM = hCm / 100;
+   const bmi = lm.weight_kg / (hM * hM);
+   tiles.push(["IMC", Math.round(bmi * 10) / 10]);
+   ```
+   Le frontend stocke `state._heightCm` dans `localStorage` et recalcule l'IMC localement. Le backend le calcule déjà.
+
+2. **Calcul de période** — `app.js` L712-714 et L765-767 :
+   ```javascript
+   const pStart = new Date(Date.now() - (state._periodDays - 1) * 86400000);
+   const pStartStr = pStart.toISOString().slice(0, 10);
+   ```
+   Le frontend calcule `start_date` à partir du nombre de jours sans validation backend.
+
+3. **Flux OTP Garmin** — `app.js` L2026-2066 :
+   - Le champ OTP (`#g-otp`) est toujours visible dans le formulaire, même sans demande MFA
+   - Un seul bouton "Connecter Garmin" soumet tout (email + password + otp)
+   - Aucun bouton "Valider le code OTP" distinct
+   - Le message `needs_otp` du backend n'est pas exploité pour afficher une UI dédiée
+
+### Ce qui est déjà correct (✅ conforme)
+
+- **Navigation** : HTML (Tableau de bord, Historique, Statistiques, Réglages, Logs) = code JS (`PATH_TO_PAGE`) = routes (`PAGE_URLS`) ✅
+- **Pas d'appels directs à Garmin/Withings** depuis le frontend ✅
+- **Pas de logique de décision de sync** dans le frontend (le `runSync` se contente d'afficher les événements SSE) ✅
+- **Pas de secrets dans le frontend** ✅
+- **`/api/status` est rapide** grâce au cache 60s ✅
 
 ---
 
@@ -29,198 +67,275 @@ Sync locale et contrôlée" et biensur tout doit rester centré verticalement co
 
 | Fichier | Rôle dans les modifications |
 |---|---|
-| `frontend/out/index.html` | Structure HTML du header : déplacer `<small class="version">` hors du `<span>` englobant |
-| `frontend/out/assets/styles.css` | CSS : adapter le style de `.version` en tant que flex child de `.brand` |
-| `frontend/out/assets/app.js` | JS : ajouter le bouton "Sync Withings" dans `renderHistorique()`, supprimer l'auto-sync du `boot()` (délégué au backend) |
-| `backend/app/api/routes_measurements.py` | Backend : rendre `_fetch_withings_measurements` intelligent — décide automatiquement de rafraîchir si données > 2j, + paramètre `force_refresh` pour le bouton manuel |
-| `backend/app/storage/sync_store.py` | Backend : exposer `last_sync_time()` pour la décision de staleness (déjà existant, pas de modification nécessaire) |
-| `backend/tests/test_measurement_store.py` | Tests : couvrir le nouveau comportement `force_refresh` et l'auto-refresh sur staleness |
+| `frontend/out/assets/app.js` | Supprimer calcul IMC local (2 endroits), supprimer calcul de période, restructurer formulaire Garmin OTP en 2 étapes |
+| `frontend/out/index.html` | Pas de changement nécessaire — les blocs OTP sont créés dynamiquement dans app.js |
+| `backend/app/services/mapper.py` | Déjà OK — l'IMC est calculé backend. Vérifier que `bmi` est bien inclus dans `mapped_fields` |
+| `backend/app/api/routes_measurements.py` | Ajouter `bmi_info` structuré dans `latest_measurement` et `HistoryMeasurementItem` |
+| `backend/app/models/sync.py` | Ajouter `bmi: float | None` et `bmi_source: str | None` à `HistoryMeasurementItem` |
+| `backend/app/services/garmin_auth_service.py` | Ajouter mécanisme de session temporaire (`auth_session_id`) pour le flux OTP en 2 étapes |
+| `backend/app/api/routes_garmin_auth.py` | Modifier `/login` pour accepter `auth_session_id` + `otp` sans `email`/`password` au 2e appel |
+| `backend/app/models/auth.py` | Ajouter `auth_session_id` à `GarminLoginRequest`, ajouter `error_code` à `GarminAuthResult` |
+| `backend/app/api/routes_sync.py` | Ajouter champ `period` optionnel dans `SyncRequest`, retourner `resolved_start`/`resolved_end` |
+| `backend/app/services/sync_engine.py` | Ajouter `_resolve_period()` avec validation (inversée, future, trop longue, timezone) |
+| `backend/tests/test_mapping.py` | Ajouter tests IMC : poids+taille valide, taille absente, taille invalide, arrondi, Withings vs calculé |
+| `backend/tests/test_sync.py` | Ajouter tests validation période : inversée, future, trop longue, timezone |
+| `backend/tests/test_garmin_api.py` | Ajouter tests flux OTP : sans OTP, OTP requis, OTP valide, OTP invalide, session expirée |
+| `docs/ARCHITECTURE_FRONTEND_BACKEND.md` | **NOUVEAU** — documentation de la frontière de responsabilité |
+| `docs/README_GUIDE.md` | Ajouter sections "Séparation frontend / backend" et "Connexion Garmin avec OTP" |
 
 ---
 
 ## Étapes d'implémentation
 
-### Étape 1 — Déplacer la version dans le header
+### Étape 1 — Supprimer le calcul d'IMC du frontend et enrichir l'API backend
 
-- **Fichier(s)** : `frontend/out/index.html`, `frontend/out/assets/styles.css`
-- **Description** : Sortir `<small class="version">v0.3.1</small>` du `<span>` qui contient le titre pour en faire un enfant direct de `<a class="brand">`. La version sera ainsi un flex child au même niveau que `.brand-mark` et le `<span>` du titre, et sera automatiquement placée à droite et centrée verticalement grâce au `display: flex; align-items: center` déjà présent sur `.brand`.
+- **Fichier(s)** : `backend/app/models/sync.py`, `backend/app/api/routes_measurements.py`, `frontend/out/assets/app.js`
+- **Description** : Le backend calcule déjà l'IMC dans `mapper.py` (L98-113) — avec priorité à la valeur Withings si présente, sinon calcul à partir de `user_height_m`. Il faut enrichir la réponse API pour exposer ce calcul de façon structurée, et supprimer les 2 calculs IMC locaux du frontend.
 - **Changements précis** :
-  - Dans `index.html` : le bloc actuel (lignes 14-20) :
-    ```html
-    <a class="brand" href="/" data-route="dashboard">
-      <span class="brand-mark">GS</span>
-      <span>
-        <strong>GarminSyncWeight</strong>
-        <small>Sync locale et contrôlée</small>
-        <small class="version">v0.3.1</small>
-      </span>
-    </a>
-    ```
-    devient :
-    ```html
-    <a class="brand" href="/" data-route="dashboard">
-      <span class="brand-mark">GS</span>
-      <span>
-        <strong>GarminSyncWeight</strong>
-        <small>Sync locale et contrôlée</small>
-      </span>
-      <small class="version">v0.3.1</small>
-    </a>
-    ```
-  - Dans `styles.css` ligne 64 : remplacer `.brand .version { font-size: 0.65em; color: var(--dim); margin-top: 0; }` par `.brand > .version { font-size: 0.8em; color: var(--muted); white-space: nowrap; }` — le sélecteur `>` cible uniquement le flex child direct. La version sera automatiquement centrée verticalement (`.brand` a `align-items: center`) et suivra le flux horizontal après le `<span>` du titre.
-- **Pattern à suivre** : La classe `.brand` est déjà `display: flex; gap: 12px; align-items: center`. Tout enfant direct est automatiquement centré verticalement.
-- **Tests** : Vérification manuelle — ouvrir le dashboard, vérifier que le header affiche `GS | GarminSyncWeight — Sync locale et contrôlée | v0.3.1` sur une ligne, centré verticalement.
-- **Risques** :
-  - Responsive `<860px` : `.header` passe en `flex-direction: column`, mais `.brand` reste en `flex-direction: row` (par défaut). La version restera à droite du titre.
-  - AMBIGUITY : La demande mentionne "v0.3.0" mais le fichier contient "v0.3.1". Je conserve la valeur réelle.
-
----
-
-### Étape 2 — Rendre le fetch Withings intelligent côté backend (staleness + force_refresh)
-
-- **Fichier(s)** : `backend/app/api/routes_measurements.py`
-- **Description** : Modifier `_fetch_withings_measurements` pour qu'elle décide **automatiquement** de rafraîchir depuis l'API Withings si la dernière synchronisation date de plus de 2 jours. Ajouter également le paramètre `force_refresh` pour le bouton manuel. **Toute la logique de décision reste dans le backend.**
-- **Changements précis** :
-  - Ajouter l'import : `from app.storage.sync_store import SyncStore`
-  - Modifier la signature de `_fetch_withings_measurements` (ligne 162) :
-    ```python
-    async def _fetch_withings_measurements(
-        wclient: WithingsClient,
-        parser: WithingsParser,
-        store: WithingsMeasurementStore,
-        start_dt: datetime,
-        end_dt: datetime,
-        force_refresh: bool = False,
-        settings: Settings | None = None,
-    ) -> tuple[list[BodyCompositionMeasurement], int]:
-        start_date = start_dt.date()
-        end_date = end_dt.date()
-
-        # ── Décision backend : faut-il rafraîchir depuis l'API ? ──
-        should_use_api = force_refresh
-        if not should_use_api and settings:
-            sync_store = SyncStore(settings.resolved_data_dir)
-            last_sync = sync_store.last_sync_time()
-            if last_sync:
-                try:
-                    last_sync_dt = datetime.fromisoformat(last_sync)
-                    stale_seconds = (datetime.now(UTC) - last_sync_dt).total_seconds()
-                    if stale_seconds > 2 * 86400:  # > 2 jours
-                        should_use_api = True
-                except (ValueError, TypeError):
-                    pass
-            else:
-                # Jamais synchronisé → forcer le fetch
-                should_use_api = True
-
-        # ── Store-first si données fraîches ──
-        if not should_use_api and start_date <= end_date:
-            parsed = store.get_measurements(start_date.isoformat(), end_date.isoformat())
-            if parsed:
-                return parsed, len(parsed)
-
-        # ── Live API ──
-        raw = await wclient.get_measurements(start_dt, end_dt)
-        parsed = parser.parse_measure_groups(raw)
-        if parsed:
-            store.save_measurements(parsed)
-        return parsed, len(raw)
-    ```
-  - Dans `_compute_latest_preview` (ligne 190), passer `settings=settings` à l'appel de `_fetch_withings_measurements`
-  - Dans `get_latest_measurement_preview` (ligne 364), ajouter `force_refresh: bool = Query(default=False)` et le transmettre. Si `force_refresh`, invalider le cache avant : `get_cache().invalidate(f"latest:{days}")`
-  - Dans `get_measurement_history` (ligne 431), ajouter `force_refresh: bool = Query(default=False)` et le transmettre
-  - Dans `get_recent_measurements` (ligne 386), idem
-- **Pattern à suivre** : `last_sync_time()` est déjà utilisé dans `routes_status.py` (ligne 41). La vérification de staleness suit le même principe.
+  1. Dans `HistoryMeasurementItem` (`models/sync.py` L179-191), ajouter :
+     ```python
+     bmi: float | None = None
+     bmi_source: str | None = None  # "withings" | "computed_backend"
+     ```
+  2. Dans `routes_measurements.py` `_compute_latest_preview()` L296-308, remplacer le simple `"bmi": float(latest.bmi) if latest.bmi else None` par un objet structuré :
+     ```python
+     "bmi": {
+         "value": float(latest.bmi) if latest.bmi else None,
+         "source": "withings" if latest.bmi and latest.bmi == measurement.bmi else "computed_backend",
+         "inputs": {
+             "weight_kg": float(latest.weight_kg) if latest.weight_kg else None,
+             "height_cm": int(settings.user_height_m * 100) if settings.user_height_m else None
+         }
+     }
+     ```
+     ⚠️ Noter que cela change la structure du champ `bmi` de `float | None` à `dict | None` dans `latest_measurement`. C'est un breaking change mais le frontend est le seul consommateur.
+  3. Dans `routes_measurements.py` `get_measurement_history()` L559-625, enrichir chaque `HistoryMeasurementItem` avec `bmi` et `bmi_source` depuis le mapper.
+  4. Dans `frontend/out/assets/app.js`, supprimer le calcul IMC local :
+     - **`renderMappingTable()`** L536-544 : supprimer le bloc `const localBmi = ...` (L536-544) et l'override conditionnel (L556-561). Lire directement `preview.latest_measurement.bmi?.value` et `preview.latest_measurement.bmi?.source`.
+     - **`renderCompactPreview()`** L1228-1236 : supprimer :
+       ```javascript
+       const hCm = state._heightCm;
+       if (hCm && hCm > 0) {
+           const hM = hCm / 100;
+           const bmi = lm.weight_kg / (hM * hM);
+           tiles.push(["IMC", Math.round(bmi * 10) / 10]);
+       } else if (lm.bmi != null) {
+           tiles.push(["IMC", lm.bmi]);
+       }
+       ```
+       Remplacer par :
+       ```javascript
+       if (lm.bmi?.value != null) tiles.push(["IMC", lm.bmi.value]);
+       ```
+     - Ajouter un indicateur visuel de source si `bmi.source === "computed_backend"` (ex: "(calculé)" en petit).
+  5. Vérifier si `state._heightCm` est utilisé ailleurs que pour l'IMC. Il est utilisé dans `renderReglages()` L2142 (affichage du champ taille dans Réglages) et `savePrefs()`/`loadPrefs()`. Ces utilisations sont légitimes (UI uniquement). Garder `state._heightCm`.
+- **Pattern à suivre** : Le `DedupPreview` / `DecisionPreview` déjà existants montrent comment structurer des sous-objets dans la réponse API.
 - **Tests** :
-  - `backend/tests/test_measurement_store.py` — ajouter un test : avec `last_sync` récent, le store est utilisé ; avec `last_sync` > 2j, l'API est appelée
-  - `backend/tests/test_measurement_store.py` — test `force_refresh=true` contourne toujours le store
-  - Utiliser les fixtures existantes : `settings` (conftest) et `sync_store` (conftest)
-- **Risques** :
-  - `SyncStore` utilise `withings_tokens.db` — s'assurer que le `data_dir` de test pointe vers un fichier temporaire (c'est déjà le cas via `conftest.py`)
-  - L'appel à `sync_store.last_sync_time()` nécessite que la table `sync_jobs` existe — `init_db` est appelé par `SyncStore.__init__`, donc OK
-  - Ne pas casser l'existant : `force_refresh` est optionnel (default `False`), le comportement par défaut sans le paramètre reste inchangé SAUF l'auto-refresh sur staleness, qui est le comportement désiré
+  - `backend/tests/test_mapping.py` — ajouter `test_bmi_with_height()`, `test_bmi_without_height()`, `test_bmi_invalid_height()`, `test_bmi_withings_vs_computed()`, `test_bmi_rounding()`
+  - `backend/tests/test_sync.py` — vérifier que `bmi_info` est présent dans le `MeasurementPreviewResponse`
+- **Risques** : Le changement de structure de `bmi` (float → objet `{value, source, inputs}`) dans `latest_measurement` est un breaking change. Le frontend est le seul consommateur connu, donc acceptable. Vérifier qu'aucun autre code (CLI, scripts) ne lit ce champ.
 
----
+### Étape 2 — Normaliser les périodes de synchronisation côté backend
 
-### Étape 3 — Ajouter le bouton "Sync Withings" sur la page Historique
-
-- **Fichier(s)** : `frontend/out/assets/app.js`
-- **Description** : Dans `renderHistorique()`, ajouter un bouton "Sync Withings" dans la `actionRow` juste avant "Vérifier les statuts Garmin". Ce bouton appelle l'endpoint backend avec `force_refresh=true` — **le frontend ne fait que déclencher, le backend gère la logique**.
+- **Fichier(s)** : `backend/app/services/sync_engine.py`, `backend/app/api/routes_sync.py`, `backend/app/models/sync.py`, `frontend/out/assets/app.js`
+- **Description** : Le frontend envoie `start_date`/`end_date`. Le backend doit valider, normaliser, et documenter la période réellement utilisée. Ajouter aussi un champ `period` (intention : `"1d"`, `"7d"`, `"30d"`) pour que le frontend n'ait pas à calculer les dates.
 - **Changements précis** :
-  - Dans `renderHistorique()`, dans le bloc `actionRow` (ligne 1807), ajouter AVANT le `refreshBtn` :
-    ```javascript
-    const withingsBtn = btn("Sync Withings", async () => {
-      if (withingsBtn.disabled) return;
-      withingsBtn.disabled = true;
-      withingsBtn.textContent = "Sync en cours…";
-      try {
-        // Le backend gère la logique : force_refresh=true → appel live à l'API Withings
-        const res = await api("/api/measurements/history?days=30&include_garmin_status=true&force_refresh=true");
-        state._historyItems = res.items || [];
-        state._historySummary = res.summary || null;
-        state._historyFetchedAt = Date.now();
-        showToast("Sync Withings", "Données Withings actualisées.", "success");
-      } catch (err) {
-        showToast("Erreur", err.message, "error");
-      } finally {
-        withingsBtn.disabled = false;
-        withingsBtn.textContent = "Sync Withings";
-      }
-      render();
-    }, "secondary");
-    actionRow.append(withingsBtn);
-    ```
-  - Placer `actionRow.append(withingsBtn)` avant `actionRow.append(refreshBtn)` (ligne 1816)
-- **Pattern à suivre** : Même structure que le bouton "Vérifier les statuts Garmin" (lignes 1810-1816). Le frontend est purement un déclencheur + affichage.
-- **Tests** : Vérification manuelle — le bouton apparaît avant "Vérifier les statuts Garmin", le clic déclenche un appel API et un toast, le bouton est désactivé pendant la requête.
-- **Risques** : Aucun. Le `force_refresh=true` est géré intégralement par le backend (Étape 2).
-
----
-
-### Étape 4 — Rafraîchissement automatique au chargement (backend-driven)
-
-- **Fichier(s)** : `frontend/out/assets/app.js`
-- **Description** : Le frontend appelle `loadHistory()` au boot **sans aucune condition**. Le backend (via l'Étape 2) décide automatiquement si les données sont fraîches (cache) ou périmées (appel live à l'API Withings). **Zéro logique de décision dans le frontend.**
-- **Changements précis** :
-  - Dans `boot()` (ligne 2526), après `setRoute(initialRoute, false)`, AJOUTER :
-    ```javascript
-    // Le backend décide automatiquement si les données Withings sont fraîches
-    // ou si un rafraîchissement depuis l'API est nécessaire (> 2 jours sans sync).
-    // Le frontend ne fait qu'appeler l'endpoint — aucune logique de décision ici.
-    if (state.withings?.connected && state.garmin?.token_valid) {
-      loadHistory().catch(() => {});
-    }
-    ```
-  - **NE PAS** ajouter de vérification `Date.now() - lastSync`, **NE PAS** ajouter de `setTimeout` ou de `loadDashboardData()` conditionnel. Le `loadDashboardData()` appelé juste après (ligne 2537-2539) gère déjà le dashboard.
-- **Pattern à suivre** : L'appel à `loadHistory()` au boot est identique à ce que fait déjà le dashboard quand l'utilisateur navigue vers `/historique` (ligne 1694). La seule différence est qu'il est systématique au boot (uniquement si services connectés).
+  1. Dans `SyncRequest` (`routes_sync.py` L40-45), ajouter :
+     ```python
+     period: str | None = None  # "1d", "7d", "30d", "custom"
+     ```
+  2. Dans `SyncEngine.run_sync()`, ajouter `_resolve_period()`:
+     ```python
+     def _resolve_period(self, start_date: str, end_date: str, period: str | None, tz) -> tuple[date, date]:
+         from datetime import date as date_cls, timedelta
+         today = datetime.now(tz).date()
+         if period and period != "custom":
+             days = {"1d": 1, "7d": 7, "30d": 30}.get(period)
+             if days is None:
+                 raise ValueError(f"Période inconnue: {period}. Valeurs acceptées: 1d, 7d, 30d")
+             start_day = today - timedelta(days=days - 1)
+             end_day = today
+         else:
+             start_day = self._parse_date(start_date)
+             end_day = self._parse_date(end_date)
+         if end_day < start_day:
+             raise ValueError("La date de fin doit être postérieure ou égale à la date de début")
+         if end_day > today + timedelta(days=1):
+             raise ValueError("La date de fin ne peut pas être dans le futur")
+         if (end_day - start_day).days > 365:
+             raise ValueError("La période ne peut pas excéder 365 jours")
+         return start_day, end_day
+     ```
+  3. Modifier `run_sync()` L73-77 pour appeler `_resolve_period()`.
+  4. Dans `SyncReport.period` (construit L152), ajouter `resolved_start`, `resolved_end` :
+     ```python
+     "period": {
+         "requested_start": start_date,
+         "requested_end": end_date,
+         "requested_period": body.period if hasattr(body, 'period') else None,
+         "resolved_start": dt_start.isoformat(),
+         "resolved_end": dt_end.isoformat(),
+         "timezone": str(tz),
+     }
+     ```
+  5. Dans `frontend/out/assets/app.js` `runSync()` L757-767 : ne plus calculer `startDate` à partir de `Date.now()`. Envoyer `period` au lieu de `start_date`/`end_date` quand c'est une période prédéfinie :
+     ```javascript
+     if (mode === "latest") {
+         startDate = previewDate ? previewDate.slice(0, 10) : getLocalDate();
+         endDate = startDate;
+     } else if (mode === "period") {
+         // Envoyer period au lieu de start_date/end_date calculés localement
+         const days = state._periodDays || 1;
+         const periodMap = { 1: "1d", 7: "7d", 30: "30d" };
+         const period = periodMap[days] || "custom";
+         body = { period };
+     }
+     ```
+  6. Dans `renderSyncActions` (L712-717) et `renderCompactSyncPanel` (L1441-1449) : remplacer le calcul local de `pStart`/`periodSummary` par l'affichage de la période reçue du backend après sync.
+- **Pattern à suivre** : `sync_engine.py` `_parse_date()` (L411-416) et `_local_day_window()` (L427-430) existants.
 - **Tests** :
-  - Le backend (testé séparément à l'Étape 2) garantit que si `last_sync` > 2j, les données sont rafraîchies depuis l'API Withings
-  - Le backend garantit que si `last_sync` < 2j, les données du store sont retournées (pas d'appel API inutile)
-  - Vérification manuelle : ouvrir l'app, vérifier que l'historique se charge (depuis le cache ou l'API, selon la fraîcheur)
+  - `backend/tests/test_sync.py` — `test_period_reversed()`, `test_period_future()`, `test_period_too_long()`, `test_period_7d()`, `test_period_timezone_europe_paris()`
+- **Risques** : Rétrocompatibilité : `start_date`/`end_date` restent acceptés sans `period` (mode `custom`). Le frontend continue de les envoyer pour le mode `latest` (date unique).
+
+### Étape 3 — Restructurer le flux OTP Garmin (backend + frontend)
+
+- **Fichier(s)** : `backend/app/services/garmin_auth_service.py`, `backend/app/api/routes_garmin_auth.py`, `backend/app/models/auth.py`, `frontend/out/assets/app.js`
+- **Description** : Implémenter un flux OTP en 2 étapes distinctes. Étape 1 : envoie email+password → si MFA requis, retourne `needs_otp` + `auth_session_id`. Étape 2 : envoie `auth_session_id` + `otp` → complète l'auth. Le frontend affiche un bloc OTP dédié uniquement quand `needs_otp` est reçu, avec un bouton "Valider le code OTP et connecter Garmin".
+- **Changements précis** :
+  1. Dans `models/auth.py`, modifier `GarminLoginRequest` :
+     ```python
+     class GarminLoginRequest(BaseModel):
+         email: str | None = None
+         password: str | None = None
+         otp: str | None = None
+         auth_session_id: str | None = None  # NOUVEAU
+     ```
+     Vérifier que `GarminAuthResult` a déjà `needs_otp: bool = False` et `auth_session_id: str | None = None` (sinon les ajouter).
+  2. Dans `garmin_auth_service.py`, ajouter un gestionnaire de sessions in-memory :
+     ```python
+     import uuid, time, threading
+     
+     _sessions: dict[str, dict] = {}
+     _sessions_lock = threading.Lock()
+     _SESSION_TTL = 300  # 5 minutes
+     
+     def _create_session(self, email: str, password: str, process) -> str:
+         sid = str(uuid.uuid4())
+         with _sessions_lock:
+             _sessions[sid] = {"email": email, "password": password, "process": process, "created": time.time()}
+         return sid
+     
+     def _get_session(self, sid: str) -> dict | None:
+         with _sessions_lock:
+             s = _sessions.get(sid)
+             if s and time.time() - s["created"] < _SESSION_TTL:
+                 return s
+             if s:
+                 del _sessions[sid]
+         return None
+     
+     def _cleanup_session(self, sid: str) -> None:
+         with _sessions_lock:
+             _sessions.pop(sid, None)
+     ```
+  3. Modifier `login()` et `_start_with_credentials()` dans `garmin_auth_service.py` :
+     - `_start_with_credentials()` : quand MFA est détecté, créer une session au lieu de terminer le process, et retourner `auth_session_id`
+     - `login()` : si `auth_session_id` est fourni, appeler une nouvelle méthode `_complete_session_with_otp(sid, otp)` qui récupère la session, écrit l'OTP dans le stdin du process existant, attend la fin, nettoie la session
+     - Maintenir le comportement legacy (`email`+`password`+`otp` sans session) pour rétrocompatibilité
+  4. Dans `routes_garmin_auth.py` `/login` : accepter `auth_session_id` + `otp` sans `email`/`password`.
+  5. Dans `frontend/out/assets/app.js` `renderReglages()` (L2026-2066) :
+     - **Supprimer** le champ OTP (`#g-otp`) du formulaire initial
+     - **Ajouter** un bloc OTP conditionnel (`#g-otp-block`) masqué par défaut :
+       ```html
+       <div id="g-otp-block" style="display:none; margin-top:12px">
+         <p style="color:var(--amber);font-size:13px">Garmin demande un code de vérification. Saisis le code reçu, puis valide la connexion.</p>
+         <label>Code OTP Garmin<input id="g-otp" autocomplete="one-time-code" /></label>
+         <button id="g-otp-btn">Valider le code OTP et connecter Garmin</button>
+         <p id="g-otp-error" style="color:var(--red);font-size:12px;display:none"></p>
+       </div>
+       ```
+     - Modifier le handler "Connecter Garmin" : envoyer email+password sans OTP, si `needs_otp` → afficher `#g-otp-block` et stocker `auth_session_id`
+     - Ajouter handler "Valider le code OTP et connecter Garmin" : envoyer `auth_session_id`+`otp`, si succès → masquer bloc OTP, rafraîchir statut
+     - Gérer les erreurs OTP (invalide, expiré) avec message clair
+  6. **Ne pas modifier** `/api/garmin/auth/verify` — il reste une vérification d'état uniquement.
+- **Pattern à suivre** : `_spawn_auth_reader()` existant (L162-193) lit déjà stdout/stderr du subprocess. La session permet de réutiliser ce même subprocess pour l'étape OTP.
+- **Tests** :
+  - `backend/tests/test_garmin_api.py` — `test_login_without_otp()`, `test_login_needs_otp_returns_session()`, `test_login_with_valid_otp_via_session()`, `test_login_with_invalid_otp()`, `test_login_with_expired_session()`, `test_verify_does_not_accept_otp()`
 - **Risques** :
-  - Appeler `loadHistory()` à chaque boot peut sembler redondant, mais le backend protège contre les appels API inutiles (store-first si données fraîches)
-  - Si Withings ou Garmin n'est pas connecté, `loadHistory()` échouera → `catch(() => {})` le gère silencieusement
+  - Le dict `_sessions` est en mémoire (pas de persistance). Acceptable car TTL = 5 min.
+  - Thread safety : `threading.Lock()` utilisé. Suffisant pour un worker unique.
+  - Si `garmin-mcp-auth` timeout entre l'étape 1 et l'étape 2, la session devient invalide. Le frontend doit gérer l'erreur "session expirée" et proposer de recommencer.
+
+### Étape 4 — Améliorer les messages d'erreur Garmin
+
+- **Fichier(s)** : `backend/app/services/garmin_auth_service.py`, `backend/app/models/auth.py`
+- **Description** : Standardiser les messages d'erreur avec un champ `error_code` dans `GarminAuthResult`. Le frontend pourra afficher des messages adaptés sans interpréter le texte brut.
+- **Changements précis** :
+  1. Dans `models/auth.py`, ajouter à `GarminAuthResult` : `error_code: str | None = None`
+     - Valeurs : `"invalid_credentials"`, `"otp_required"`, `"otp_invalid"`, `"otp_expired"`, `"timeout"`, `"garmin_unavailable"`, `"already_connected"`, `"disconnected"`, `"verify_failed"`
+  2. Dans `garmin_auth_service.py`, mapper les erreurs :
+     - `_start_with_credentials()` : détection MFA → `error_code="otp_required"`
+     - `process.returncode != 0` → `error_code="invalid_credentials"`
+     - `TimeoutExpired` → `error_code="timeout"`
+     - `_complete_session_with_otp()` : OTP invalide → `error_code="otp_invalid"`
+     - Session expirée → `error_code="otp_expired"`
+- **Pattern à suivre** : `GarminAuthResult` existe déjà avec `ok`, `message`, `needs_otp`.
+- **Tests** : `test_error_codes_mapped_correctly()`
+- **Risques** : Les messages de `garmin-mcp-auth` peuvent varier — le mapping par `error_code` est plus robuste que le parsing.
+
+### Étape 5 — Documenter l'architecture frontend/backend
+
+- **Fichier(s)** : `docs/ARCHITECTURE_FRONTEND_BACKEND.md` (**NOUVEAU**), `docs/README_GUIDE.md`
+- **Description** : Créer une documentation de la frontière de responsabilité, et mettre à jour le guide README.
+- **Changements précis** :
+  1. Créer `docs/ARCHITECTURE_FRONTEND_BACKEND.md` avec :
+     - "Règle d'or" : backend = source de vérité, frontend = affichage uniquement
+     - Tableau "Ce que le frontend PEUT faire" (affichage, UI, appels API, état local)
+     - Tableau "Ce que le frontend NE DOIT PAS faire" (calculs métier, mapping, déduplication, décisions)
+     - Tableau "Ce que le backend DOIT garder" (auth, parsing, mapping, déduplication, sync, rapports)
+     - "Pourquoi les calculs métier côté frontend sont dangereux"
+     - "Comment ajouter une nouvelle métrique proprement" (exemple IMC)
+     - "Connexion Garmin avec OTP" : flux étape 1/2, différence `/login` vs `/verify`, erreurs fréquentes, données à ne pas logger
+  2. Dans `docs/README_GUIDE.md`, ajouter une référence vers `docs/ARCHITECTURE_FRONTEND_BACKEND.md` dans la section appropriée.
+- **Pattern à suivre** : `docs/mapping_withings_garmin.md` pour le style.
+- **Tests** : Aucun.
+- **Risques** : Aucun.
+
+### Étape 6 — Vérification finale : audit post-correction
+
+- **Fichier(s)** : `frontend/out/assets/app.js` (audit uniquement)
+- **Description** : Vérifier qu'aucune logique métier ne subsiste dans le frontend.
+- **Changements précis** :
+  1. Grep pour `hM * hM`, `weight_kg / (hM`, `/(hM`, `bmi` dans `app.js` → doit être 0 occurrence de calcul
+  2. Grep pour `Date.now() - (` ou `86400000` dans `app.js` → doit être 0 occurrence de calcul de période
+  3. Vérifier que `email`/`password`/`otp` ne sont jamais dans `localStorage`
+  4. Vérifier que `renderStatusBar()` ne bloque pas le rendu (les appels sont async via `refreshStatus()`)
+- **Pattern à suivre** : N/A (vérification).
+- **Tests** : Revue manuelle + grep.
+- **Risques** : Si d'autres violations sont découvertes, les ajouter.
 
 ---
 
 ## Ordre d'exécution recommandé
 
-1. **Étape 2** — Rendre le backend intelligent (staleness + force_refresh). Prérequis pour les étapes 3 et 4.
-2. **Étape 3** — Ajouter le bouton "Sync Withings" dans l'UI. Dépend de l'étape 2 (a besoin de `force_refresh`).
-3. **Étape 4** — Appeler `loadHistory()` au boot. Dépend de l'étape 2 (a besoin du comportement auto-refresh backend).
-4. **Étape 1** — Déplacer la version dans le header. Indépendant, peut être fait en parallèle.
+1. **Étape 1 (IMC)** — Impact direct sur la séparation, pas de dépendances
+2. **Étape 2 (Périodes)** — Peut être fait en parallèle de l'étape 1
+3. **Étape 3 (OTP Garmin)** — Plus complexe, dépend de `auth.py`. Après étapes 1-2
+4. **Étape 4 (Messages d'erreur)** — Dépend de l'étape 3, immédiatement après
+5. **Étape 5 (Documentation)** — Indépendante, en parallèle
+6. **Étape 6 (Vérification finale)** — Après tout
 
 ---
 
 ## Points d'attention
 
-- **Principe backend-driven** : La règle est stricte — le frontend ne contient **aucune** vérification de timestamp, aucun `if (days > 2)`, aucune décision de "dois-je rafraîchir ou pas". Tout est dans `_fetch_withings_measurements`.
-- **Seuil des 2 jours** : Hardcodé côté backend (`2 * 86400`). Si le seuil doit devenir configurable, ajouter une variable d'environnement (ex. `WITHINGS_STALE_SECONDS`). Pas nécessaire pour cette itération.
-- **Cache invalidation** : `_compute_latest_preview` utilise `stale_while_revalidate`. Quand `force_refresh=true`, il faut invalider explicitement le cache `latest:{days}`. Sans cela, le cache peut servir des données périmées.
-- **Différence boutons** : "Sync Withings" = `force_refresh=true` → appel live à l'API Withings. "Vérifier les statuts Garmin" = appel normal → store-first, vérifie juste les statuts Garmin des mesures existantes. "Rafraîchir les mesures" = recharge `/api/measurements/recent`.
-- **Responsive header** : À `<860px`, le header passe en `flex-direction: column`, mais `.brand` reste en `flex-direction: row`. La version reste à droite du titre. Vérifier visuellement.
-- **Version hardcodée** : `v0.3.1` est hardcodée dans `index.html`. Pas de régression.
-- **Pas d'écriture Garmin** : Ce plan est 100% read-only côté Garmin. Aucune modification des appels `add_body_composition`.
+- **Rétrocompatibilité API** : Le changement de `bmi` (float → objet) dans `latest_measurement` et l'ajout de `period` dans `SyncRequest` sont des breaking changes. Le frontend est le seul consommateur connu → acceptable.
+- **Session OTP in-memory** : Non partagé entre workers. OK car single-worker actuellement. Si multi-worker → migrer vers Redis ou SQLite.
+- **`state._heightCm`** : Conservé dans le frontend pour l'affichage dans Réglages. Le backend lit `USER_HEIGHT_M` depuis `.env` pour les calculs. Pas de conflit.
+- **Convention `app.` imports** : Tout nouveau code backend utilise `from app.xxx import YYY`, jamais `from backend.app.xxx`.
+- **Settings frozen** : `Settings` est `frozen=True` — toujours `Settings(**overrides)` pour les tests.
+- **`/api/status`** : Déjà optimal (caché 60s, `stale_while_revalidate`). Ne pas toucher.
+- **Navigation frontend** : Déjà cohérente et propre. Ne pas modifier.
 
 ---
 
@@ -228,10 +343,12 @@ Sync locale et contrôlée" et biensur tout doit rester centré verticalement co
 
 - [ ] `uv run ruff check backend` — pas d'erreurs
 - [ ] `uv run pytest` — tous les tests passent
-- [ ] `uv run pytest -k "force_refresh"` — les nouveaux tests de staleness/force_refresh passent
-- [ ] Vérification manuelle : header affiche `GS | GarminSyncWeight — Sync locale et contrôlée | v0.3.1` centré verticalement
-- [ ] Vérification manuelle : bouton "Sync Withings" présent sur `/historique`, avant "Vérifier les statuts Garmin"
-- [ ] Vérification manuelle : clic sur "Sync Withings" → appel API Withings → toast "Données Withings actualisées"
-- [ ] Vérification manuelle : au boot, si `last_sync` > 2j → les données Withings sont rafraîchies automatiquement (vérifiable dans les logs backend)
-- [ ] Vérification manuelle : au boot, si `last_sync` < 2j → les données viennent du cache (pas d'appel API Withings inutile)
-- [ ] Pas de régression sur le dashboard, l'historique, les réglages
+- [ ] Tests IMC : poids+taille valide, taille absente, invalide, arrondi, Withings vs calculé
+- [ ] Tests période : inversée, future, trop longue, timezone
+- [ ] Tests OTP : sans OTP, requis+session, OTP valide, invalide, session expirée, `/verify` ne soumet pas d'OTP
+- [ ] Aucun calcul IMC résiduel dans `app.js` (vérifié par grep)
+- [ ] Aucun calcul de période résiduel dans `app.js`
+- [ ] Le flux OTP fonctionne en 2 étapes distinctes dans l'UI
+- [ ] `/api/garmin/auth/verify` ne soumet jamais d'OTP
+- [ ] Les secrets (password, OTP) n'apparaissent pas dans les logs
+- [ ] `docs/ARCHITECTURE_FRONTEND_BACKEND.md` existe et est complet

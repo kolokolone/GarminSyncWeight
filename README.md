@@ -210,5 +210,5 @@ Le `PYTHONPATH` doit pointer vers `backend/` — les scripts le font automatique
 ---
 
 <p align="center">
-  <sub>v0.3.6 · Construit avec FastAPI, SQLite et le SDK garminconnect.<br/>Image Docker : ghcr.io/kolokolone/garminsyncweight<br/>Licence MIT.</sub>
+  <sub>v0.3.7 · Construit avec FastAPI, SQLite et le SDK garminconnect.<br/>Image Docker : ghcr.io/kolokolone/garminsyncweight<br/>Licence MIT.</sub>
 </p>

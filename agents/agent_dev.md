@@ -108,9 +108,10 @@ After ALL steps are implemented and ALL verifications pass (ruff clean, pytest g
 
 1. **Version bump** — find ALL files containing the current version string (e.g. `0.3.2`) and increment by +0.0.1:
    - Use `grep` with the current version number to find every file that references it
-   - The known files are `pyproject.toml`, `backend/app/config.py`, `README.md` — but grep anyway, there may be others (docs, scripts, Docker labels, etc.)
+   - The known files are `pyproject.toml`, `backend/app/config.py`, `README.md` — but grep anyway, there may be others (docs, scripts, Docker labels, frontend, etc.)
    - Replace the old version with the new one in every file found
    - **Attention** : les versions dans les différents fichiers peuvent ne pas être synchronisées (un fichier peut être en `0.3.1`, un autre en `0.3.0`, etc.). Ne pas faire de remplacement global aveugle — vérifier chaque occurrence fichier par fichier et bumper chaque version trouvée indépendamment.
+   - Tous les fichiers doivent etre à la derniere version.
 2. **Stage all changes**: `git add -A`
 3. **Commit**: `git commit -m "chore: bump vX.Y.Z -> vX.Y.Z+1, {short change description}"`
-4. **Push**: `git push` (to `main`, without tags)
+4. **Push**: `git push` (to `main`, utilise les tag avec la version actuelle)

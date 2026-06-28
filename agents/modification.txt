@@ -1,14 +1,508 @@
-## je viens de remarquer que je n'ai pas de bouton pour faire une synchronisation avec withings (obtenir les nouvelles données depuis Withings): 
-- je veux ajouter un bouton qui permet de synchroniser les données depuis winthings :
-    - idéalement ajouter ce bouton sur la page /historique tout en bas juste avant le bouton "Vérifier les statuts Garmin" et sur la meme ligne,
-- ajouter une synchronisation automatique avec withings (pour obtenir les nouvelles données) si pas de synchronisation faite depuis > 2jours; 
+Tu dois auditer puis corriger l’architecture de l’application GarminSyncWeight afin de garantir une séparation nette entre backend et frontend.
 
-## Concernant le titre dans la barre tout en haut : 
-- il y a actuellement écrit : "GS
-GarminSyncWeight
-Sync locale et contrôlée
-v0.3.0",
-- est-ce qu'il est possible de déplacer la version juste à droite de "GarminSyncWeight
-Sync locale et contrôlée" et biensur tout doit rester centré verticalement comme c'est actuellement; 
+Objectif général : le backend doit être la source de vérité pour tous les traitements métier, calculs, synchronisations, validations, mappings, accès API externes, déduplications, décisions de conflit, stockage et génération de rapports. Le frontend doit rester léger, réactif, lisible, et ne doit servir qu’à afficher les données, recueillir les choix utilisateur, déclencher les actions backend et présenter les retours d’état.
 
+Ne pars pas du principe que l’architecture actuelle est correcte. Vérifie réellement le code existant, identifie les responsabilités actuellement portées par le frontend, puis déplace côté backend tout ce qui relève du métier.
 
+1. Audit frontend/backend
+
+Analyse tout le dépôt GarminSyncWeight et produis d’abord un état des lieux clair :
+
+* quelles fonctions sont exécutées côté backend ;
+* quelles fonctions sont exécutées côté frontend ;
+* quels appels API sont faits par le frontend ;
+* quels calculs sont faits dans le navigateur ;
+* quelles responsabilités métier sont mal placées ;
+* quelles routes backend existent déjà et peuvent être réutilisées ;
+* quelles routes backend doivent être améliorées ou créées ;
+* quels fichiers frontend sont des sources modifiables et quels fichiers sont des fichiers générés/buildés.
+
+Point important : ne modifie pas directement un bundle généré comme `frontend/out/assets/app.js` si des sources frontend existent ailleurs. Corrige les vrais fichiers sources, puis reconstruis proprement. Si le projet ne contient réellement que des fichiers statiques générés, signale-le clairement dans le rapport et applique une correction minimale propre, sans masquer le problème de maintenabilité.
+
+2. Règle d’architecture à appliquer
+
+Le frontend peut :
+
+* afficher les mesures Withings et Garmin ;
+* afficher les statuts de connexion ;
+* afficher les erreurs et les messages de succès ;
+* proposer des boutons d’action ;
+* recueillir email, mot de passe, OTP, choix de période, paramètres d’affichage ;
+* appeler les endpoints backend ;
+* écouter les événements SSE ou WebSocket si utilisés ;
+* afficher des graphiques, tableaux, badges et états de chargement ;
+* gérer uniquement l’état UI local : onglet actif, formulaire ouvert, loader, message visible, ligne sélectionnée.
+
+Le frontend ne doit pas :
+
+* calculer l’IMC ;
+* mapper les champs Withings vers Garmin ;
+* décider si une mesure doit être synchronisée ;
+* dédupliquer les mesures ;
+* décider si une mesure Garmin existe déjà ;
+* interpréter les formats Garmin ou Withings ;
+* appliquer les règles métier de synchronisation ;
+* calculer les périodes finales en source de vérité ;
+* corriger les dates, timezone ou bornes temporelles ;
+* générer des rapports métier ;
+* faire des appels directs à Garmin ou Withings ;
+* contenir des secrets, tokens, mots de passe persistés ou logique d’authentification sensible.
+
+Le backend doit :
+
+* gérer l’authentification Withings ;
+* gérer l’authentification Garmin ;
+* gérer le flux OTP Garmin ;
+* gérer les tokens et sessions ;
+* récupérer les données Withings ;
+* récupérer les données Garmin ;
+* parser les mesures ;
+* normaliser les dates ;
+* appliquer la timezone ;
+* calculer l’IMC ;
+* mapper les mesures Withings vers Garmin ;
+* comparer les mesures Withings et Garmin ;
+* détecter les doublons ;
+* décider ce qui est synchronisable ;
+* écrire dans Garmin ;
+* stocker l’historique local ;
+* construire les rapports ;
+* exposer au frontend des objets déjà prêts à afficher.
+
+3. Correction du calcul d’IMC
+
+Cherche tout calcul d’IMC fait côté frontend, notamment les formules du type :
+
+poids / taille²
+
+ou toute variante utilisant `weight_kg`, `height_cm`, `height_m`, `bmi`.
+
+Déplace ce calcul côté backend.
+
+Le backend doit exposer une valeur d’IMC déjà calculée dans la réponse API, avec un format explicite. Exemple attendu :
+
+{
+"metric": "bmi",
+"value": 24.5,
+"source": "computed_backend",
+"inputs": {
+"weight_kg": 92.1,
+"height_cm": 194
+}
+}
+
+Le frontend ne doit plus refaire le calcul. Il doit simplement afficher la valeur reçue.
+
+Si Withings fournit déjà un IMC, le backend doit gérer la priorité clairement :
+
+* utiliser la valeur Withings si elle existe et paraît valide ;
+* sinon calculer l’IMC côté backend à partir du poids et de la taille configurée ;
+* indiquer dans la réponse si la valeur est fournie ou calculée.
+
+Ajouter des tests backend pour :
+
+* poids valide + taille valide ;
+* taille absente ;
+* taille invalide ;
+* poids absent ;
+* arrondi ;
+* comparaison entre IMC fourni par Withings et IMC calculé localement.
+
+4. Correction de la gestion des périodes de synchronisation
+
+Le frontend peut proposer des choix simples :
+
+* dernière mesure ;
+* aujourd’hui ;
+* 7 jours ;
+* 30 jours ;
+* période personnalisée.
+
+Mais le backend doit rester la source de vérité.
+
+Le frontend peut envoyer une intention, par exemple :
+
+{
+"period": "7d"
+}
+
+ou :
+
+{
+"start_date": "2026-06-01",
+"end_date": "2026-06-28"
+}
+
+Mais le backend doit :
+
+* valider la période ;
+* normaliser les dates ;
+* appliquer la timezone configurée ;
+* refuser les périodes inversées ;
+* refuser les périodes trop longues si nécessaire ;
+* refuser les dates futures incohérentes ;
+* documenter la période réellement utilisée dans la réponse.
+
+La réponse backend doit renvoyer les bornes réellement prises en compte, par exemple :
+
+{
+"requested_period": "7d",
+"resolved_start": "2026-06-21T00:00:00+02:00",
+"resolved_end": "2026-06-28T23:59:59+02:00",
+"timezone": "Europe/Paris"
+}
+
+Le frontend doit afficher ces informations si utile, mais ne doit pas les recalculer.
+
+5. Correction du flux Garmin OTP
+
+Le problème utilisateur actuel est le suivant : après avoir cliqué sur “Connecter Garmin”, Garmin demande un code OTP. L’utilisateur saisit le code, mais l’interface ne rend pas évident le bouton à cliquer pour valider le code et finaliser la connexion.
+
+Tu dois corriger ce flux de manière explicite.
+
+Comportement attendu :
+
+Étape 1 : formulaire Garmin initial.
+
+Champs :
+
+* email Garmin ;
+* mot de passe Garmin ;
+* bouton principal : “Connecter Garmin”.
+
+Au clic, le frontend appelle :
+
+POST /api/garmin/auth/login
+
+avec email et mot de passe.
+
+Étape 2 : si le backend répond que l’OTP est nécessaire.
+
+Si la réponse contient une information du type :
+
+{
+"needs_otp": true
+}
+
+alors le frontend doit afficher immédiatement un bloc OTP clair.
+
+Ce bloc doit contenir :
+
+* un message du type : “Garmin demande un code de vérification. Saisis le code reçu, puis valide la connexion.”
+* un champ “Code OTP Garmin” ;
+* un seul bouton principal : “Valider le code OTP et connecter Garmin”.
+
+Ce bouton doit appeler à nouveau :
+
+POST /api/garmin/auth/login
+
+avec :
+
+* email ;
+* mot de passe ou identifiant de session temporaire si le backend est modifié pour le permettre ;
+* otp.
+
+Il ne faut pas utiliser `/api/garmin/auth/verify` pour soumettre l’OTP.
+
+La route `/api/garmin/auth/verify` doit rester une route de vérification d’état uniquement. Elle peut servir à vérifier si une connexion Garmin déjà existante est valide, mais pas à valider un code OTP.
+
+6. Amélioration backend du flux OTP
+
+Vérifie l’implémentation actuelle de l’authentification Garmin.
+
+Si le backend relance entièrement le processus de login après réception de l’OTP, évalue si c’est fragile. Si possible, améliore le flux avec une session temporaire.
+
+Comportement idéal :
+
+Premier appel :
+
+POST /api/garmin/auth/login
+
+Réponse :
+
+{
+"success": false,
+"needs_otp": true,
+"auth_session_id": "temporary-session-id",
+"message": "OTP required"
+}
+
+Second appel :
+
+POST /api/garmin/auth/login
+
+Payload :
+
+{
+"auth_session_id": "temporary-session-id",
+"otp": "123456"
+}
+
+Le backend doit alors reprendre le flux d’authentification Garmin associé à cette session temporaire.
+
+La session temporaire doit :
+
+* expirer rapidement ;
+* ne pas exposer le mot de passe au frontend après le premier envoi ;
+* ne jamais être persistée durablement ;
+* ne jamais être loggée avec des données sensibles ;
+* être supprimée après succès ou échec définitif.
+
+Si cette amélioration est trop lourde pour l’architecture actuelle, applique une version minimale acceptable :
+
+* le second appel `/login` accepte email + mot de passe + otp ;
+* le frontend garde temporairement les valeurs uniquement en mémoire pendant le flux ;
+* l’interface explique clairement quoi faire ;
+* les erreurs OTP sont compréhensibles ;
+* les champs sensibles ne sont jamais stockés durablement ;
+* les logs ne contiennent jamais le mot de passe ni l’OTP.
+
+7. Messages d’erreur Garmin à améliorer
+
+Les erreurs doivent être explicites côté utilisateur.
+
+Prévoir au minimum les cas suivants :
+
+* identifiants Garmin incorrects ;
+* OTP requis ;
+* OTP invalide ;
+* OTP expiré ;
+* délai dépassé ;
+* Garmin indisponible ;
+* connexion réussie ;
+* token Garmin déjà valide ;
+* déconnexion réussie ;
+* échec de vérification du statut Garmin.
+
+Ne pas afficher de stack trace brute dans l’interface.
+
+Côté logs backend, conserver des logs utiles techniquement, mais sans secret :
+
+* ne jamais logger le mot de passe ;
+* ne jamais logger l’OTP ;
+* ne jamais logger les tokens complets ;
+* masquer les emails si nécessaire ;
+* garder les étapes : login started, otp required, otp submitted, login success, login failed.
+
+8. Clarification des boutons Garmin dans l’interface
+
+La page Garmin doit avoir une hiérarchie claire.
+
+Boutons attendus :
+
+* “Connecter Garmin” : démarre la connexion avec email/mot de passe.
+* “Valider le code OTP et connecter Garmin” : visible uniquement quand Garmin demande un OTP.
+* “Vérifier la connexion Garmin” : vérifie seulement si la connexion actuelle est valide.
+* “Déconnecter Garmin” : supprime ou invalide la session/token local selon l’implémentation.
+
+Le bouton “Vérifier la connexion Garmin” ne doit jamais être placé ou formulé de manière à laisser croire qu’il valide l’OTP.
+
+Après succès OTP, le frontend doit :
+
+* masquer le bloc OTP ;
+* afficher “Garmin connecté” ;
+* rafraîchir le statut Garmin ;
+* permettre de lancer une synchronisation ;
+* ne pas laisser l’utilisateur bloqué sur le formulaire OTP.
+
+9. Allègement du chargement frontend
+
+Auditer les appels faits au chargement initial de l’application.
+
+Si `/api/status` déclenche des vérifications externes lentes Garmin ou Withings, corriger.
+
+Comportement attendu :
+
+* `/api/status` doit être rapide ;
+* il doit retourner l’état local connu ;
+* il ne doit pas bloquer l’interface si Garmin ou Withings est lent ;
+* les vérifications externes doivent être déclenchées séparément ;
+* le frontend doit afficher la page immédiatement ;
+* les statuts externes doivent être chargés progressivement.
+
+Exemple de séparation souhaitée :
+
+GET /api/status
+Retourne l’état local de l’application.
+
+GET /api/garmin/auth/status
+Retourne le statut Garmin local ou vérifié selon l’implémentation actuelle.
+
+POST /api/garmin/auth/verify
+Lance une vérification explicite de la connexion Garmin existante.
+
+GET /api/withings/auth/status
+Retourne le statut Withings.
+
+Le frontend ne doit pas attendre tous les statuts pour rendre la page.
+
+10. Alignement de la navigation frontend
+
+Vérifie les routes et menus frontend.
+
+Il ne doit pas y avoir d’écart entre :
+
+* les liens visibles dans l’interface ;
+* les routes réellement gérées par le JavaScript ;
+* les pages disponibles ;
+* les noms utilisés dans le code ;
+* les titres affichés à l’utilisateur.
+
+Si l’interface contient des routes comme `home`, `withings`, `garmin`, `sync`, `logs`, `api`, mais que le code JavaScript utilise plutôt `dashboard`, `history`, `stats`, `settings`, `logs`, il faut unifier.
+
+Choisir une nomenclature claire, par exemple :
+
+* Tableau de bord ;
+* Withings ;
+* Garmin ;
+* Synchronisation ;
+* Historique ;
+* Logs ;
+* Paramètres.
+
+Ne pas conserver deux systèmes concurrents.
+
+11. Synchronisation et responsabilités backend
+
+Vérifie que le frontend ne fait qu’appeler une route de synchronisation.
+
+Le backend doit gérer :
+
+* récupération des mesures Withings ;
+* récupération des mesures Garmin existantes ;
+* comparaison ;
+* déduplication ;
+* mapping ;
+* décision de synchronisation ;
+* écriture Garmin ;
+* génération du rapport ;
+* stockage local ;
+* retour d’un résumé exploitable par l’interface.
+
+Le frontend doit simplement afficher :
+
+* nombre de mesures trouvées ;
+* nombre de mesures déjà présentes ;
+* nombre de mesures synchronisées ;
+* nombre d’erreurs ;
+* détails des erreurs ;
+* rapport final ;
+* logs ou progression.
+
+Si une logique de décision est présente côté frontend, la déplacer côté backend.
+
+12. Gestion des événements de progression
+
+Si l’application utilise SSE pour suivre la synchronisation, conserver ce principe, mais vérifier que le frontend n’interprète pas le métier.
+
+Le backend doit envoyer des événements déjà qualifiés :
+
+* `sync_started`;
+* `withings_fetch_started`;
+* `withings_fetch_completed`;
+* `garmin_fetch_started`;
+* `garmin_fetch_completed`;
+* `deduplication_completed`;
+* `sync_write_started`;
+* `sync_write_completed`;
+* `sync_completed`;
+* `sync_failed`.
+
+Chaque événement doit contenir un message prêt à afficher et éventuellement des compteurs.
+
+Le frontend ne doit pas reconstruire la logique métier à partir d’événements trop bruts.
+
+13. Tests à ajouter ou corriger
+
+Ajouter des tests backend pour :
+
+* calcul IMC ;
+* mapping Withings vers Garmin ;
+* normalisation des dates ;
+* validation des périodes ;
+* déduplication ;
+* synchronisation sans doublon ;
+* synchronisation avec mesure déjà existante ;
+* flux Garmin sans OTP ;
+* flux Garmin avec OTP requis ;
+* flux Garmin avec OTP valide ;
+* flux Garmin avec OTP invalide ;
+* route `/verify` qui ne doit pas soumettre d’OTP.
+
+Ajouter des tests frontend ou e2e pour :
+
+* affichage du formulaire Garmin ;
+* clic sur “Connecter Garmin” ;
+* affichage du champ OTP après réponse `needs_otp`;
+* clic sur “Valider le code OTP et connecter Garmin” ;
+* absence d’appel à `/verify` pour valider l’OTP ;
+* affichage du statut Garmin connecté après succès ;
+* affichage d’une erreur claire après OTP invalide ;
+* maintien de la réactivité de l’interface pendant les appels API.
+
+14. Documentation à mettre à jour
+
+Mettre à jour `docs/README_GUIDE.md`.
+
+Ajouter une section claire : “Séparation frontend / backend”.
+
+Elle doit expliquer :
+
+* ce que le frontend a le droit de faire ;
+* ce que le frontend ne doit pas faire ;
+* ce que le backend doit toujours garder ;
+* pourquoi les calculs métier ne doivent pas être faits dans le navigateur ;
+* comment ajouter une nouvelle métrique proprement ;
+* comment ajouter un nouvel endpoint sans déplacer la logique métier côté frontend.
+
+Ajouter aussi une section : “Connexion Garmin avec OTP”.
+
+Elle doit expliquer :
+
+* le bouton “Connecter Garmin” ;
+* le cas où Garmin demande un OTP ;
+* le bouton “Valider le code OTP et connecter Garmin” ;
+* la différence entre `/login` et `/verify` ;
+* les erreurs fréquentes ;
+* comment diagnostiquer un échec ;
+* où regarder les logs ;
+* quelles données ne doivent jamais être loggées.
+
+Créer ou mettre à jour une documentation technique dédiée si nécessaire, par exemple :
+
+`docs/ARCHITECTURE_FRONTEND_BACKEND.md`
+
+Cette documentation doit décrire la frontière de responsabilité entre l’interface et le backend.
+
+15. Critères d’acceptation
+
+Le travail est considéré comme terminé uniquement si :
+
+* aucun calcul d’IMC n’est encore fait côté frontend ;
+* aucun mapping métier Withings/Garmin n’est fait côté frontend ;
+* aucune déduplication n’est faite côté frontend ;
+* la période finale de synchronisation est validée côté backend ;
+* l’OTP Garmin a un champ dédié et un bouton explicite ;
+* l’OTP est soumis à `/api/garmin/auth/login`, pas à `/api/garmin/auth/verify` ;
+* le bouton `/verify` est clairement réservé à la vérification d’une connexion existante ;
+* les erreurs Garmin sont compréhensibles ;
+* les secrets ne sont pas loggés ;
+* le chargement initial de l’interface reste rapide ;
+* les routes frontend sont cohérentes ;
+* les tests backend critiques passent ;
+* la documentation est mise à jour.
+
+16. Rapport final attendu
+
+À la fin, fournir un résumé clair des changements réalisés :
+
+* fichiers modifiés ;
+* responsabilités déplacées du frontend vers le backend ;
+* endpoints ajoutés ou modifiés ;
+* correction exacte du flux OTP Garmin ;
+* tests ajoutés ;
+* documentation mise à jour ;
+* limites restantes ;
+* points à surveiller plus tard.
+
+Ne pas ajouter de nouvelles fonctionnalités hors sujet. L’objectif n’est pas de refaire toute l’application, mais de solidifier l’architecture, rendre le frontend plus léger, rendre le backend réellement responsable du métier, et corriger l’expérience de connexion Garmin avec OTP.

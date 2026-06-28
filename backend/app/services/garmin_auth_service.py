@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -22,8 +23,45 @@ from app.utils.redact import redact_text
 class GarminAuthService:
     """Authentication status/login/disconnect flow for Garmin MCP tokens."""
 
+    # ── OTP session storage (in-memory, not shared between workers) ──
+    _sessions: dict[str, dict[str, Any]] = {}
+    _sessions_lock: threading.Lock = threading.Lock()
+    _SESSION_TTL: float = 300.0  # 5 minutes
+
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
+
+    # ── Session helpers ────────────────────────────────────────
+
+    @classmethod
+    def _create_session(cls, email: str, password: str, process: subprocess.Popen[str]) -> str:
+        """Store credentials and subprocess for the MFA step."""
+        sid = str(uuid.uuid4())
+        with cls._sessions_lock:
+            cls._sessions[sid] = {
+                "email": email,
+                "password": password,
+                "process": process,
+                "created": time.time(),
+            }
+        return sid
+
+    @classmethod
+    def _get_session(cls, sid: str) -> dict[str, Any] | None:
+        """Retrieve a session, or None if expired / missing."""
+        with cls._sessions_lock:
+            s = cls._sessions.get(sid)
+            if s and time.time() - s["created"] < cls._SESSION_TTL:
+                return s
+            if s:
+                del cls._sessions[sid]
+        return None
+
+    @classmethod
+    def _cleanup_session(cls, sid: str) -> None:
+        """Remove a session after use."""
+        with cls._sessions_lock:
+            cls._sessions.pop(sid, None)
 
     @property
     def token_dir(self) -> Path:
@@ -70,8 +108,19 @@ class GarminAuthService:
         email: str | None = None,
         password: str | None = None,
         otp: str | None = None,
+        auth_session_id: str | None = None,
     ) -> GarminAuthResult:
-        """Start or complete Garmin auth via garmin-mcp-auth."""
+        """Start or complete Garmin auth via garmin-mcp-auth.
+
+        Two-step MFA flow:
+        1. Send email+password → get auth_session_id (needs_otp=True)
+        2. Send auth_session_id+otp → complete authentication
+        """
+        # ── Step 2: complete MFA session with OTP ──────────────
+        if auth_session_id and otp:
+            return self._complete_session_with_otp(auth_session_id, otp)
+
+        # ── Assisted mode (no credentials) ─────────────────────
         if not email or not password:
             return GarminAuthResult(
                 ok=False,
@@ -84,8 +133,11 @@ class GarminAuthService:
                 status=self.status(),
             )
 
+        # ── Legacy: credentials + OTP in one call ──────────────
         if otp:
             return self._complete_with_otp(email, password, otp)
+
+        # ── Step 1: start with credentials, detect MFA ─────────
         return self._start_with_credentials(email, password)
 
     def disconnect(self, confirm: bool) -> DisconnectResult:
@@ -108,10 +160,13 @@ class GarminAuthService:
         process, stdout, stderr, mfa_detected = self._spawn_auth_reader(email, password)
         mfa_detected.wait(timeout=20)
         if mfa_detected.is_set():
-            self._terminate(process)
+            # MFA required — keep process alive and return a session id
+            sid = self._create_session(email, password, process)
             return GarminAuthResult(
                 ok=False,
                 needs_otp=True,
+                auth_session_id=sid,
+                error_code="otp_required",
                 message="Code MFA Garmin requis. Saisis le code reçu pour terminer.",
                 status=self.status(),
             )
@@ -122,15 +177,72 @@ class GarminAuthService:
             self._terminate(process)
             return GarminAuthResult(
                 ok=False,
+                error_code="timeout",
                 message="Authentification Garmin interrompue: délai dépassé.",
                 status=self.status(),
             )
 
         output = self._clean_output("\n".join(stdout + stderr))
         status = self.status()
+        is_valid = process.returncode == 0 and status.token_valid
         return GarminAuthResult(
-            ok=process.returncode == 0 and status.token_valid,
-            message="Authentification Garmin réussie." if status.token_valid else output,
+            ok=is_valid,
+            error_code=None if is_valid else "invalid_credentials",
+            message="Authentification Garmin réussie." if is_valid else output,
+            status=status,
+        )
+
+    def _complete_session_with_otp(self, session_id: str, otp: str) -> GarminAuthResult:
+        """Complete MFA by writing OTP to the existing subprocess stdin."""
+        session = self._get_session(session_id)
+        if session is None:
+            return GarminAuthResult(
+                ok=False,
+                error_code="otp_expired",
+                message="Session OTP expirée. Recommence la connexion depuis le début.",
+                status=self.status(),
+            )
+
+        process = session["process"]
+        try:
+            if process.stdin is not None:
+                process.stdin.write(otp + "\n")
+                process.stdin.flush()
+                process.stdin.close()
+        except OSError:
+            self._terminate(process)
+            self._cleanup_session(session_id)
+            return GarminAuthResult(
+                ok=False,
+                error_code="otp_invalid",
+                message="Erreur de communication avec garmin-mcp-auth. Réessaie.",
+                status=self.status(),
+            )
+
+        try:
+            process.wait(timeout=self._settings.garmin_auth_timeout_seconds)
+        except subprocess.TimeoutExpired:
+            self._terminate(process)
+            self._cleanup_session(session_id)
+            return GarminAuthResult(
+                ok=False,
+                error_code="timeout",
+                message="Authentification Garmin interrompue: délai dépassé.",
+                status=self.status(),
+            )
+
+        self._cleanup_session(session_id)
+        status = self.status()
+        if process.returncode != 0 or not status.token_valid:
+            return GarminAuthResult(
+                ok=False,
+                error_code="otp_invalid",
+                message="Code OTP invalide. Vérifie le code et réessaie.",
+                status=status,
+            )
+        return GarminAuthResult(
+            ok=True,
+            message="Authentification Garmin réussie.",
             status=status,
         )
 
@@ -155,6 +267,7 @@ class GarminAuthService:
         return GarminAuthResult(
             ok=process.returncode == 0 and status.token_valid,
             needs_otp=not status.token_valid,
+            error_code=None if (process.returncode == 0 and status.token_valid) else "otp_invalid",
             message="Authentification Garmin réussie." if status.token_valid else output,
             status=status,
         )

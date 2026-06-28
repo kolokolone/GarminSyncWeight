@@ -66,6 +66,7 @@ Tout le reste — architecture, sécurité, détails techniques — est secondai
 
 - Le détail du mapping Withings → Garmin → renvoyer vers `docs/mapping_withings_garmin.md`
 - L'architecture complète des composants → `docs/architecture.md`
+- La séparation frontend / backend → `docs/ARCHITECTURE_FRONTEND_BACKEND.md`
 - Les menaces de sécurité détaillées → `docs/security.md`
 - L'historique des bugs et corrections → `AUDIT_GARMINSYNCWEIGHT.md`
 - Les secrets, tokens, ou identifiants réels
@@ -81,6 +82,7 @@ Quand ces choses changent, le README **doit** être mis à jour :
 | Élément | Où dans le README | Impact si obsolète |
 |---|---|---|
 | Version (pyproject.toml) | Header ou footer | Confusion sur les fonctionnalités |
+| Version (frontend) | `frontend/out/index.html` badge | Incohérence visible dans l'UI |
 | Champs synchronisés | Tableau "Ce qui est synchronisé" | Attentes fausses de l'utilisateur |
 | Commandes de lancement | Démarrage rapide / Installation | L'utilisateur ne peut pas lancer l'appli |
 | URLs et ports | Démarrage rapide | L'utilisateur ne trouve pas l'appli |
@@ -104,6 +106,7 @@ Avant de remplacer le README principal :
 - [ ] Les URLs sont correctes et accessibles
 - [ ] Le tableau de configuration correspond exactement à `.env.example`
 - [ ] La version affichée correspond à `pyproject.toml`
+- [ ] La version frontend (`frontend/out/index.html`) correspond à `pyproject.toml`
 - [ ] Les liens vers `docs/` sont valides (les fichiers existent)
 - [ ] Aucun secret, token ou identifiant réel n'est présent
 - [ ] Le fichier fait moins de 150 lignes (hors code blocks)
