@@ -1,0 +1,15 @@
+# Fichier de modifications — GarminSyncWeight
+# Écris tes demandes de changement ici, en langage naturel.
+# L'agent Brainstorm lira ce fichier et le transformera en plan d'implémentation détaillé.
+# Une fois le plan généré dans modifications_brainstorm.md, l'agent Dev l'exécutera.
+
+# --- EXEMPLE (efface et remplace par tes propres demandes) ---
+
+# Je voudrais ajouter un nouvel endpoint API GET /api/measurements/latest
+# qui retourne la dernière mesure Withings stockée en base.
+# L'endpoint doit être caché 30 secondes avec le TTL cache existant.
+# Ajouter aussi un test unitaire dans test_measurement_store.py.
+
+# Aussi, changer le port par défaut de 8010 à 8020 dans le .env.example
+# et dans la config du serveur, parce que le port 8010 est déjà utilisé
+# par un autre service sur ma machine.
