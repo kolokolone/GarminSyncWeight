@@ -111,6 +111,10 @@ Conserver `.shell` comme conteneur principal :
 
 Le Dashboard doit rester dans cette largeur.
 
+## Règle d'espacement
+
+- **Espacement bottom universel** : Toujours conserver un espace d'au moins **15px** en bas du contenu principal (`.shell`). Cette règle s'applique à toutes les pages (Dashboard, Historique, Réglages, Logs). Le `padding-bottom` du conteneur `.shell` garantit cet espacement. Ne pas le retirer et ne pas laisser une page sans marge inférieure.
+
 La page principale doit être organisée autour du workflow :
 
 1. état global ;
@@ -509,3 +513,4 @@ La refonte respecte le style si :
 6. Les composants ont une cohérence de spacing, rayon, couleur et typographie.
 7. L’interface reste lisible et responsive.
 8. Aucun framework UI lourd n’a été ajouté sans nécessité.
+9. Un espacement d'au moins 15px est présent en bas de chaque page (via `padding-bottom` sur `.shell`).

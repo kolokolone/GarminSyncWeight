@@ -35,7 +35,7 @@ body {
   background-size: 34px 34px;
 }
 
-.shell { width: min(1180px, calc(100vw - 32px)); margin: 0 auto; }
+.shell { width: min(1180px, calc(100vw - 32px)); margin: 0 auto; padding-bottom: 15px; }
 
 .header-shell {
   position: sticky;
@@ -750,6 +750,9 @@ textarea { min-height: 260px; font-family: Consolas, monospace; }
   border-radius: 28px;
   box-shadow: 0 24px 80px rgba(0,0,0,.28);
   padding: 22px;
+}
+.sync-panel-compact .eyebrow {
+  margin-bottom: 15px;
 }
 .sync-panel-compact .spc-title {
   font-size: 14px;
