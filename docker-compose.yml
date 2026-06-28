@@ -2,6 +2,9 @@ services:
   garminsyncweight:
     image: ghcr.io/kolokolone/garminsyncweight:latest
     container_name: garminsyncweight
+    environment:
+      - GARMIN_AUTH_COMMAND=garmin-mcp-auth
+      - GARMIN_VERIFY_COMMAND=garmin-mcp-auth --verify
     ports:
       - "8010:8010"
     volumes:

@@ -37,8 +37,13 @@ class Settings(BaseSettings):
     # ─── Garmin authentication / Taxuspt garmin_mcp ───────────
     garmin_mcp_source: str = "git+https://github.com/Taxuspt/garmin_mcp"
     garmin_token_dir: Path = Field(default=Path.home() / ".garminconnect")
-    garmin_auth_command: str = "garmin-mcp-auth"
-    garmin_verify_command: str = "garmin-mcp-auth --verify"
+    garmin_auth_command: str = (
+        "uvx --python 3.12 --from git+https://github.com/Taxuspt/garmin_mcp garmin-mcp-auth"
+    )
+    garmin_verify_command: str = (
+        "uvx --python 3.12 --from git+https://github.com/Taxuspt/garmin_mcp "
+        "garmin-mcp-auth --verify"
+    )
     garmin_auth_timeout_seconds: int = 60
     garmin_verify_timeout_seconds: int = 20
 
