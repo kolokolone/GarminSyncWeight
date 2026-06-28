@@ -170,7 +170,7 @@ Key helpers in conftest:
 
 ## Version note
 
-`pyproject.toml` version 0.3.7 is canonical. Also hardcoded in `config.py` (`app_version`).
+`pyproject.toml` version 0.3.8 is canonical. Also hardcoded in `config.py` (`app_version`).
 When bumping: update pyproject.toml, backend/app/config.py, README.md,
 docs/DOCKER.md, and frontend/out/index.html (version badge).
 
