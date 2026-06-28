@@ -11,6 +11,7 @@ from pathlib import Path
 
 from app.cache import get_cache, stale_while_revalidate
 from app.config import Settings, get_settings
+from app.dependencies import verify_admin_token
 from app.models.sync import (
     DecisionPreview,
     DedupPreview,
@@ -677,6 +678,7 @@ class ManualMeasurementRequest(BaseModel):
 async def add_manual_measurement(
     body: ManualMeasurementRequest,
     settings: Settings = Depends(get_settings),
+    _admin: None = Depends(verify_admin_token),
 ) -> dict:
     """Add a manual weight measurement (stored locally)."""
     settings.ensure_directories()
@@ -709,6 +711,7 @@ def list_manual_measurements(
 def delete_manual_measurement(
     entry_id: int,
     settings: Settings = Depends(get_settings),
+    _admin: None = Depends(verify_admin_token),
 ) -> dict:
     """Delete a manual measurement by ID."""
     manual = _load_manual(settings)

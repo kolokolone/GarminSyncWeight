@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 from app.cache import get_cache
 from app.config import Settings, get_settings
+from app.dependencies import verify_admin_token
 from app.models.sync import SyncReport
 from app.services.deduplicator import Deduplicator
 from app.services.garmin_client import GarminClient
@@ -48,6 +49,7 @@ class SyncRequest(BaseModel):
 async def run_sync(
     body: SyncRequest,
     settings: Settings = Depends(get_settings),
+    _admin: None = Depends(verify_admin_token),
 ) -> SyncReport:
     """Run the guarded Withings→Garmin synchronization."""
     engine = _build_engine(settings)
@@ -70,6 +72,7 @@ async def run_sync(
 async def run_sync_short(
     body: SyncRequest,
     settings: Settings = Depends(get_settings),
+    _admin: None = Depends(verify_admin_token),
 ) -> SyncReport:
     """Alias for clients that post directly to /api/sync."""
     return await run_sync(body, settings)
@@ -201,6 +204,7 @@ async def sync_stream(
     end_date: str = Query(..., description="End date YYYY-MM-DD"),
     timezone: str | None = Query(default=None, description="IANA timezone name"),
     settings: Settings = Depends(get_settings),
+    _admin: None = Depends(verify_admin_token),
 ) -> StreamingResponse:
     """SSE endpoint: runs sync and streams progress events in real-time.
 

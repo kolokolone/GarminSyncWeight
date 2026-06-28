@@ -6,6 +6,7 @@
   <a href="docs/architecture.md">Architecture</a> ·
   <a href="docs/security.md">Sécurité</a> ·
   <a href="docs/mapping_withings_garmin.md">Mapping</a> ·
+  <a href="docs/DOCKER.md">Déploiement Docker</a> ·
   <a href="AUDIT_GARMINSYNCWEIGHT.md">Audit</a>
 </p>
 
@@ -54,12 +55,17 @@ http://127.0.0.1:8010/docs  → Documentation API (Swagger)
 ### Avec Docker (recommandé)
 
 ```powershell
-copy .env.example .env
-# Éditez .env
-docker compose up --build
+mkdir config
+copy .env.example config\.env
+# Éditez config\.env avec vos identifiants
+docker compose up -d
 ```
 
-Volumes persistants : `data/`, `logs/`, `runtime/`, `~/.garminconnect`.
+L'image est publiée sur GitHub Container Registry : `ghcr.io/kolokolone/garminsyncweight:latest`
+
+Documentation complète : [docs/DOCKER.md](docs/DOCKER.md)
+
+Volumes persistants : `data/`, `logs/`, `runtime/`, `config/`, `~/.garminconnect`.
 
 ### Sans Docker
 
@@ -77,13 +83,18 @@ Prérequis : Python ≥ 3.12, [`uv`](https://docs.astral.sh/uv/).
 ### Withings (OAuth2)
 
 1. Créez une app sur [developer.withings.com](https://developer.withings.com/dashboard/)
-2. Le callback doit être **exactement** `http://127.0.0.1:8010/api/withings/auth/callback`
+2. Le callback doit être **exactement** l'URL configurée dans `WITHINGS_REDIRECT_URI` :
+   - Dev local : `http://127.0.0.1:8010/api/withings/auth/callback`
+   - LAN : `http://IP_DU_SERVEUR:8010/api/withings/auth/callback`
+   - Reverse proxy : `https://votre.domaine.fr/api/withings/auth/callback`
 3. Scope requis : `user.metrics`
 4. Dans l'interface, cliquez sur **Connecter Withings**
 
 Le refresh token est rotatif — chaque renouvellement est persisté automatiquement.
 
 ### Garmin (via Taxuspt/garmin_mcp)
+
+En Docker, `garmin-mcp-auth` est installé directement dans l'image. Pour le développement local :
 
 ```powershell
 uvx --python 3.12 --from git+https://github.com/Taxuspt/garmin_mcp garmin-mcp-auth
@@ -149,16 +160,18 @@ La synchronisation **refuse d'écrire** si :
 
 ## Configuration
 
-Copiez `.env.example` vers `.env` :
+Copiez `.env.example` vers `.env` (dev local) ou `config/.env` (Docker) :
 
 | Variable | Description | Défaut |
 |---|---|---|
 | `WITHINGS_CLIENT_ID` | ID client OAuth Withings | — |
 | `WITHINGS_CLIENT_SECRET` | Secret client Withings | — |
+| `WITHINGS_REDIRECT_URI` | URL de callback OAuth | `http://127.0.0.1:8010/...` |
+| `APP_BASE_URL` | URL publique de l'application | `http://127.0.0.1:8010` |
 | `USER_HEIGHT_M` | Taille en mètres (pour l'IMC) | — |
 | `APP_TIMEZONE` | Fuseau horaire | `Europe/Paris` |
 | `GARMIN_TOKEN_DIR` | Dossier des tokens Garmin | `~/.garminconnect` |
-| `ADMIN_API_TOKEN` | Token pour les routes admin | — |
+| `ADMIN_API_TOKEN` | Token pour protéger les routes admin (LAN) | — |
 | `WEIGHT_DUPLICATE_EPSILON_KG` | Seuil doublon | `0.05` |
 | `WEIGHT_CONFLICT_EPSILON_KG` | Seuil conflit | `0.2` |
 
@@ -167,7 +180,7 @@ Copiez `.env.example` vers `.env` :
 ```powershell
 uv sync --group dev          # Inclut pytest, ruff
 uv run ruff check backend    # Lint
-uv run pytest                # Tests (47+)
+uv run pytest                # Tests (137+)
 uv run pytest -k "test_run_sync" -v  # Test spécifique
 ./scripts/test.ps1           # Lint + tests
 ```
@@ -176,12 +189,14 @@ Le `PYTHONPATH` doit pointer vers `backend/` — les scripts le font automatique
 
 ## Sécurité
 
-- Bind sur `127.0.0.1` uniquement — **ne pas exposer publiquement** sans reverse proxy authentifié
+- Bind Docker sur `8010:8010` pour l'accès LAN — protéger les routes sensibles avec `ADMIN_API_TOKEN`
+- Ne pas exposer publiquement sans reverse proxy avec HTTPS
 - Redaction automatique dans les logs : tokens, secrets, emails
 - Aucune suppression de données Garmin
 - Tokens Garmin isolés dans `~/.garminconnect`
-- Refresh tokens Withings persistés chiffrés dans SQLite
+- Refresh tokens Withings persistés dans SQLite
 - State CSRF pour le flux OAuth Withings
+- Healthcheck Docker via `/api/healthz` (indépendant des APIs externes)
 
 [En savoir plus](docs/security.md)
 
@@ -190,10 +205,10 @@ Le `PYTHONPATH` doit pointer vers `backend/` — les scripts le font automatique
 - L'API Garmin Connect n'est pas publique — des changements côté Garmin peuvent casser l'intégration
 - `percent_hydration` n'est pas synchronisé (format incompatible)
 - Pas de suppression de mesures Garmin existantes
-- Pas d'authentification intégrée pour l'interface (restriction réseau recommandée)
+- Pas d'authentification intégrée pour l'interface (utiliser `ADMIN_API_TOKEN` ou restriction réseau)
 
 ---
 
 <p align="center">
-  <sub>v0.3.5 · Construit avec FastAPI, SQLite et le SDK garminconnect.<br/>Licence MIT.</sub>
+  <sub>v0.3.6 · Construit avec FastAPI, SQLite et le SDK garminconnect.<br/>Image Docker : ghcr.io/kolokolone/garminsyncweight<br/>Licence MIT.</sub>
 </p>

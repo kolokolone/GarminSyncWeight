@@ -18,14 +18,15 @@ Tout le reste — architecture, sécurité, détails techniques — est secondai
 3. **Ce qui est synchronisé** — tableau des champs avec statut visuel (✅⚠️❌)
 4. **Démarrage rapide** — 4 commandes max, résultat visible immédiatement
 5. **Installation** — Docker d'abord, puis sans Docker
-6. **Authentification** — Withings puis Garmin, instructions concrètes
-7. **Utilisation** — interface web, CLI, API HTTP
-8. **Fonctionnement** — pipeline visuel + règles métier critiques
-9. **Configuration** — tableau des variables .env
-10. **Développement** — commandes pour les contributeurs
-11. **Sécurité** — 5 points max, lien vers `docs/security.md`
-12. **Limites** — ce que l'appli ne fait pas (honnêteté)
-13. **Footer** — licence, stack
+6. **Déploiement Docker** — lien vers docs/DOCKER.md, résumé 2 lignes
+7. **Authentification** — Withings puis Garmin, instructions concrètes
+8. **Utilisation** — interface web, CLI, API HTTP
+9. **Fonctionnement** — pipeline visuel + règles métier critiques
+10. **Configuration** — tableau des variables .env
+11. **Développement** — commandes pour les contributeurs
+12. **Sécurité** — 5 points max, lien vers `docs/security.md`
+13. **Limites** — ce que l'appli ne fait pas (honnêteté)
+14. **Footer** — licence, stack
 
 ## Règles d'écriture
 
@@ -53,11 +54,13 @@ Tout le reste — architecture, sécurité, détails techniques — est secondai
 - La commande exacte pour lancer le projet en local
 - Les URLs de l'app (interface, docs API)
 - Les prérequis (Python ≥ 3.12, uv, Docker optionnel)
-- La configuration minimale (.env.example → .env)
+- La configuration minimale (.env.example → config/.env pour Docker, .env pour dev local)
 - Les instructions d'auth Withings ET Garmin (les deux sont obligatoires)
 - Les décisions de sync possibles (`synced`, `skipped_existing`, etc.)
 - La règle : **aucune suppression, aucune modification** des données Garmin
 - Les commandes de dev : `uv run ruff check backend`, `uv run pytest`
+- Le lien vers la documentation Docker complète (docs/DOCKER.md)
+- La mention que l'image est sur GHCR (`ghcr.io/kolokolone/garminsyncweight`)
 
 ## Ce qui NE DOIT PAS être dans le README
 
@@ -85,6 +88,7 @@ Quand ces choses changent, le README **doit** être mis à jour :
 | Instructions d'auth Garmin | Authentification | L'utilisateur ne peut pas se connecter |
 | Commandes de dev | Développement | Les contributeurs perdent du temps |
 | Nouvelles limites | Limites | Fausse confiance dans l'appli |
+| Configuration Docker | docs/DOCKER.md | L'utilisateur ne peut pas déployer |
 
 ## Convention de nommage
 

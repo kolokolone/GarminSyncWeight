@@ -20,7 +20,6 @@ from app.api import (
 from app.config import get_settings
 from app.logging_config import setup_logging
 from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -40,17 +39,6 @@ def create_app() -> FastAPI:
         title="GarminSyncWeight",
         version=settings.app_version,
         description="Withings → Garmin Connect bridge — controlled idempotent sync",
-    )
-
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=[
-            f"http://127.0.0.1:{settings.app_port}",
-            f"http://localhost:{settings.app_port}",
-        ],
-        allow_credentials=False,
-        allow_methods=["GET", "POST"],
-        allow_headers=["*"],
     )
 
     # ── Routes ────────────────────────────────────────────────

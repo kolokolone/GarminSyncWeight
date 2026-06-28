@@ -1,4 +1,5 @@
-"""GET /api/status — health check and configuration overview (cached 60s)."""
+"""GET /api/status — health check and configuration overview (cached 60s).
+GET /api/healthz — local Docker healthcheck (no external API calls)."""
 
 from app.cache import get_cache
 from app.config import Settings, get_settings
@@ -8,10 +9,40 @@ from app.services.withings_auth import WithingsAuthService
 from app.storage.sync_store import SyncStore
 from app.storage.token_store import TokenStore
 from fastapi import APIRouter, Depends
+from fastapi.responses import JSONResponse
 
 router = APIRouter(tags=["status"])
 
 _STATUS_CACHE_TTL = 60  # seconds
+
+
+@router.get("/api/healthz")
+def healthz(settings: Settings = Depends(get_settings)) -> JSONResponse:
+    """Local health check — no external API calls.
+
+    Docker healthcheck uses this endpoint. It must NOT test Withings,
+    Garmin, OAuth, tokens, or any external service. If those are down,
+    the container should still report healthy.
+    """
+    ok = True
+    dirs = {
+        "data": settings.resolved_data_dir,
+        "logs": settings.resolved_log_dir,
+        "runtime": settings.resolved_runtime_dir,
+        "reports": settings.reports_dir,
+    }
+    checks: dict[str, bool] = {}
+    for name, path in dirs.items():
+        exists = path.exists()
+        checks[name] = exists
+        if not exists:
+            ok = False
+
+    status_code = 200 if ok else 503
+    return JSONResponse(
+        content={"status": "healthy" if ok else "unhealthy", "checks": checks},
+        status_code=status_code,
+    )
 
 
 def _get_auth(settings: Settings = Depends(get_settings)) -> WithingsAuthService:

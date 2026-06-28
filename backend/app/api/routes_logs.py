@@ -6,6 +6,7 @@ Endpoints:
 
 
 from app.config import Settings, get_settings
+from app.dependencies import verify_admin_token
 from app.models.sync import LogResult
 from app.utils.redact import redact_lines
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -20,6 +21,7 @@ def get_logs(
     service: str,
     lines: int = Query(default=200, ge=1, le=1000),
     settings: Settings = Depends(get_settings),
+    _admin: None = Depends(verify_admin_token),
 ) -> LogResult:
     """Return redacted log lines for a given service."""
     if service not in ALLOWED_SERVICES:

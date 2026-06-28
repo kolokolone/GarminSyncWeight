@@ -77,7 +77,7 @@ def test_withings_config_save_writes_env_without_returning_secret(
         assert body["client_id_set"] is True
         assert body["client_secret_set"] is True
         assert "local-client-secret" not in str(body)
-        env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+        env_text = (tmp_path / "config" / ".env").read_text(encoding="utf-8")
         assert 'WITHINGS_CLIENT_ID="local-client-id"' in env_text
         assert 'WITHINGS_CLIENT_SECRET="local-client-secret"' in env_text
     finally:

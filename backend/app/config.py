@@ -15,7 +15,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", "config/.env"),
         env_file_encoding="utf-8",
         extra="ignore",
         frozen=True,
@@ -37,13 +37,8 @@ class Settings(BaseSettings):
     # ─── Garmin authentication / Taxuspt garmin_mcp ───────────
     garmin_mcp_source: str = "git+https://github.com/Taxuspt/garmin_mcp"
     garmin_token_dir: Path = Field(default=Path.home() / ".garminconnect")
-    garmin_auth_command: str = (
-        "uvx --python 3.12 --from git+https://github.com/Taxuspt/garmin_mcp garmin-mcp-auth"
-    )
-    garmin_verify_command: str = (
-        "uvx --python 3.12 --from git+https://github.com/Taxuspt/garmin_mcp "
-        "garmin-mcp-auth --verify"
-    )
+    garmin_auth_command: str = "garmin-mcp-auth"
+    garmin_verify_command: str = "garmin-mcp-auth --verify"
     garmin_auth_timeout_seconds: int = 60
     garmin_verify_timeout_seconds: int = 20
 
@@ -70,7 +65,7 @@ class Settings(BaseSettings):
     log_format: Literal["jsonl", "text"] = "jsonl"
 
     # ─── Version ──────────────────────────────────────────────
-    app_version: str = "0.3.5"
+    app_version: str = "0.3.6"
 
     @field_validator("app_host")
     @classmethod

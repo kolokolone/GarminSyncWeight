@@ -1,6 +1,7 @@
 """Local Garmin authentication routes for the admin UI."""
 
 from app.config import Settings, get_settings
+from app.dependencies import verify_admin_token
 from app.models.auth import (
     DisconnectRequest,
     DisconnectResult,
@@ -28,6 +29,7 @@ def status(auth: GarminAuthService = Depends(_get_garmin_auth)) -> GarminAuthSta
 def login(
     payload: GarminLoginRequest,
     auth: GarminAuthService = Depends(_get_garmin_auth),
+    _admin: None = Depends(verify_admin_token),
 ) -> GarminAuthResult:
     """Start or complete Garmin MCP authentication."""
     return auth.login(payload.email, payload.password, payload.otp)
@@ -40,7 +42,10 @@ def verify(auth: GarminAuthService = Depends(_get_garmin_auth)) -> GarminAuthSta
 
 
 @router.post("/reauthenticate", response_model=GarminAuthResult)
-def reauthenticate(auth: GarminAuthService = Depends(_get_garmin_auth)) -> GarminAuthResult:
+def reauthenticate(
+    auth: GarminAuthService = Depends(_get_garmin_auth),
+    _admin: None = Depends(verify_admin_token),
+) -> GarminAuthResult:
     """Return assisted Garmin auth command for reauthentication."""
     return auth.login()
 
@@ -49,6 +54,7 @@ def reauthenticate(auth: GarminAuthService = Depends(_get_garmin_auth)) -> Garmi
 def disconnect(
     payload: DisconnectRequest,
     auth: GarminAuthService = Depends(_get_garmin_auth),
+    _admin: None = Depends(verify_admin_token),
 ) -> DisconnectResult:
     """Delete local Garmin token files with explicit confirmation."""
     return auth.disconnect(payload.confirm)

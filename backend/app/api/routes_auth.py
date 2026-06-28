@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from app.config import Settings, get_settings
+from app.dependencies import verify_admin_token
 from app.services.withings_auth import WithingsAuthService
 from app.storage.token_store import TokenStore
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -50,7 +51,7 @@ def _get_auth(settings: Settings = Depends(get_settings)) -> WithingsAuthService
 
 
 def _env_path() -> Path:
-    return Path.cwd() / ".env"
+    return Path.cwd() / "config" / ".env"
 
 
 def _quote_env_value(value: str) -> str:
@@ -59,6 +60,7 @@ def _quote_env_value(value: str) -> str:
 
 
 def _upsert_env_values(path: Path, values: dict[str, str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     existing = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
     keys = set(values)
     kept = [line for line in existing if line.split("=", 1)[0].strip() not in keys]
@@ -81,7 +83,10 @@ def auth_config_status(settings: Settings = Depends(get_settings)) -> WithingsCo
 
 
 @router.post("/config", response_model=WithingsConfigStatus)
-def save_auth_config(payload: WithingsConfigRequest) -> WithingsConfigStatus:
+def save_auth_config(
+    payload: WithingsConfigRequest,
+    _admin: None = Depends(verify_admin_token),
+) -> WithingsConfigStatus:
     """Persist local Withings OAuth app credentials in .env.
 
     This endpoint is intended for localhost admin setup only. The client secret
@@ -165,6 +170,7 @@ async def auth_callback(
 @router.post("/disconnect")
 def auth_disconnect(
     auth: WithingsAuthService = Depends(_get_auth),
+    _admin: None = Depends(verify_admin_token),
 ) -> dict:
     """Remove stored Withings token."""
     auth.clear_token()
@@ -179,7 +185,10 @@ async def auth_status(auth: WithingsAuthService = Depends(_get_auth)) -> Withing
 
 
 @router.post("/test", response_model=WithingsConnectionStatus)
-async def auth_test(auth: WithingsAuthService = Depends(_get_auth)) -> WithingsConnectionStatus:
+async def auth_test(
+    auth: WithingsAuthService = Depends(_get_auth),
+    _admin: None = Depends(verify_admin_token),
+) -> WithingsConnectionStatus:
     """Actively test the Withings API connection."""
     result = await auth.check_connection()
     return WithingsConnectionStatus(**result)
