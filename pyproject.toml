@@ -1,6 +1,6 @@
 [project]
 name = "GarminSyncWeight"
-version = "0.3.3"
+version = "0.3.4"
 description = "Controlled Withings Body Cardio to Garmin Connect synchronization"
 requires-python = ">=3.12"
 dependencies = [

@@ -1807,6 +1807,27 @@ function renderHistorique() {
   const actionRow = document.createElement("div");
   actionRow.className = "actions";
 
+  const withingsBtn = btn("Sync Withings", async () => {
+    if (withingsBtn.disabled) return;
+    withingsBtn.disabled = true;
+    withingsBtn.textContent = "Sync en cours…";
+    try {
+      // Le backend gère la logique : force_refresh=true → appel live à l'API Withings
+      const res = await api("/api/measurements/history?days=30&include_garmin_status=true&force_refresh=true");
+      state._historyItems = res.items || [];
+      state._historySummary = res.summary || null;
+      state._historyFetchedAt = Date.now();
+      showToast("Sync Withings", "Données Withings actualisées.", "success");
+    } catch (err) {
+      showToast("Erreur", err.message, "error");
+    } finally {
+      withingsBtn.disabled = false;
+      withingsBtn.textContent = "Sync Withings";
+    }
+    render();
+  }, "secondary");
+  actionRow.append(withingsBtn);
+
   const refreshBtn = btn("Vérifier les statuts Garmin", async () => {
     state._historyLoading = true;
     render();
@@ -2532,6 +2553,13 @@ function loadPrefs() {
   const initialRoute = routeFromPath();
 
   setRoute(initialRoute, false);
+
+  // Le backend décide automatiquement si les données Withings sont fraîches
+  // ou si un rafraîchissement depuis l'API est nécessaire (> 2 jours sans sync).
+  // Le frontend ne fait qu'appeler l'endpoint — aucune logique de décision ici.
+  if (state.withings?.connected && state.garmin?.token_valid) {
+    loadHistory().catch(() => {});
+  }
 
   // Load dashboard data in background
   if (state.page === "dashboard") {

@@ -165,21 +165,47 @@ async def _fetch_withings_measurements(
     store: WithingsMeasurementStore,
     start_dt: datetime,
     end_dt: datetime,
+    force_refresh: bool = False,
+    settings: Settings | None = None,
 ) -> tuple[list[BodyCompositionMeasurement], int]:
     """Get measurements — persistent store first, Withings API fallback.
 
     Returns ``(parsed_measurements, raw_groups_count)``.
     When served from the store *raw_groups_count* is the number of
     measurements returned (a best‑effort approximation).
+
+    Backend-driven staleness: if the last successful sync is older than
+    2 days the store is bypassed and fresh data is fetched from the
+    Withings API.  Pass ``force_refresh=True`` to skip the staleness
+    check and always hit the live API.
     """
     start_date = start_dt.date()
     end_date = end_dt.date()
-    if start_date <= end_date:
+
+    # ── Décision backend : faut-il rafraîchir depuis l'API ? ──
+    should_use_api = force_refresh
+    if not should_use_api and settings:
+        sync_store = SyncStore(settings.resolved_data_dir)
+        last_sync = sync_store.last_sync_time()
+        if last_sync:
+            try:
+                last_sync_dt = datetime.fromisoformat(last_sync)
+                stale_seconds = (datetime.now(UTC) - last_sync_dt).total_seconds()
+                if stale_seconds > 2 * 86400:  # > 2 jours
+                    should_use_api = True
+            except (ValueError, TypeError):
+                pass
+        else:
+            # Jamais synchronisé → forcer le fetch
+            should_use_api = True
+
+    # ── Store-first si données fraîches ──
+    if not should_use_api and start_date <= end_date:
         parsed = store.get_measurements(start_date.isoformat(), end_date.isoformat())
         if parsed:
             return parsed, len(parsed)
 
-    # Fallback to live API
+    # ── Live API ──
     raw = await wclient.get_measurements(start_dt, end_dt)
     parsed = parser.parse_measure_groups(raw)
     if parsed:
@@ -190,6 +216,7 @@ async def _fetch_withings_measurements(
 async def _compute_latest_preview(
     days: int,
     settings: Settings,
+    force_refresh: bool = False,
 ) -> MeasurementPreviewResponse:
     """Full computation of the /latest preview (extracted for caching)."""
     auth, wclient, parser, mapper, garmin, dedup, sync_store, meas_store = _build_services(settings)
@@ -219,6 +246,8 @@ async def _compute_latest_preview(
     try:
         parsed, raw_groups_count = await _fetch_withings_measurements(
             wclient, parser, meas_store, start_dt, end_dt,
+            force_refresh=force_refresh,
+            settings=settings,
         )
     except Exception as exc:
         return MeasurementPreviewResponse(
@@ -364,6 +393,7 @@ async def _compute_latest_preview(
 @router.get("/latest", response_model=MeasurementPreviewResponse)
 async def get_latest_measurement_preview(
     days: int = Query(default=30, ge=1, le=365),
+    force_refresh: bool = Query(default=False),
     settings: Settings = Depends(get_settings),
 ) -> MeasurementPreviewResponse:
     """Preview the latest Withings measurement and its planned Garmin mapping.
@@ -371,8 +401,13 @@ async def get_latest_measurement_preview(
     This is a READ-ONLY endpoint. It NEVER writes to Garmin.
 
     Results are cached with stale-while-revalidate (30s fresh, 5min stale).
+    Set ``force_refresh=true`` to bypass the cache and fetch fresh data.
     """
     cache_key = f"latest:{days}"
+
+    if force_refresh:
+        get_cache().invalidate(cache_key)
+        return await _compute_latest_preview(days, settings, force_refresh=True)
 
     async def _fetch():
         return await _compute_latest_preview(days, settings)
@@ -386,6 +421,7 @@ async def get_latest_measurement_preview(
 @router.get("/recent", response_model=RecentMeasurementsResponse)
 async def get_recent_measurements(
     days: int = Query(default=30, ge=1, le=365),
+    force_refresh: bool = Query(default=False),
     settings: Settings = Depends(get_settings),
 ) -> RecentMeasurementsResponse:
     """Return recent Withings measurements for the Dashboard sparkline.
@@ -407,6 +443,8 @@ async def get_recent_measurements(
     try:
         parsed, _ = await _fetch_withings_measurements(
             wclient, parser, meas_store, start_dt, end_dt,
+            force_refresh=force_refresh,
+            settings=settings,
         )
     except Exception as exc:
         raise HTTPException(
@@ -432,6 +470,7 @@ async def get_recent_measurements(
 async def get_measurement_history(
     days: int = Query(default=30, ge=1, le=365),
     include_garmin_status: bool = Query(default=True),
+    force_refresh: bool = Query(default=False),
     settings: Settings = Depends(get_settings),
 ) -> HistoryMeasurementsResponse:
     """Return Withings measurements enriched with Garmin sync status.
@@ -456,6 +495,8 @@ async def get_measurement_history(
     try:
         parsed, _ = await _fetch_withings_measurements(
             wclient, parser, meas_store, start_dt, end_dt,
+            force_refresh=force_refresh,
+            settings=settings,
         )
     except Exception as exc:
         raise HTTPException(

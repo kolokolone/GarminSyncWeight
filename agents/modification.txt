@@ -1,15 +1,14 @@
-# Fichier de modifications — GarminSyncWeight
-# Écris tes demandes de changement ici, en langage naturel.
-# L'agent Brainstorm lira ce fichier et le transformera en plan d'implémentation détaillé.
-# Une fois le plan généré dans modifications_brainstorm.md, l'agent Dev l'exécutera.
+## je viens de remarquer que je n'ai pas de bouton pour faire une synchronisation avec withings (obtenir les nouvelles données depuis Withings): 
+- je veux ajouter un bouton qui permet de synchroniser les données depuis winthings :
+    - idéalement ajouter ce bouton sur la page /historique tout en bas juste avant le bouton "Vérifier les statuts Garmin" et sur la meme ligne,
+- ajouter une synchronisation automatique avec withings (pour obtenir les nouvelles données) si pas de synchronisation faite depuis > 2jours; 
 
-# --- EXEMPLE (efface et remplace par tes propres demandes) ---
+## Concernant le titre dans la barre tout en haut : 
+- il y a actuellement écrit : "GS
+GarminSyncWeight
+Sync locale et contrôlée
+v0.3.0",
+- est-ce qu'il est possible de déplacer la version juste à droite de "GarminSyncWeight
+Sync locale et contrôlée" et biensur tout doit rester centré verticalement comme c'est actuellement; 
 
-# Je voudrais ajouter un nouvel endpoint API GET /api/measurements/latest
-# qui retourne la dernière mesure Withings stockée en base.
-# L'endpoint doit être caché 30 secondes avec le TTL cache existant.
-# Ajouter aussi un test unitaire dans test_measurement_store.py.
 
-# Aussi, changer le port par défaut de 8010 à 8020 dans le .env.example
-# et dans la config du serveur, parce que le port 8010 est déjà utilisé
-# par un autre service sur ma machine.

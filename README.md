@@ -195,5 +195,5 @@ Le `PYTHONPATH` doit pointer vers `backend/` — les scripts le font automatique
 ---
 
 <p align="center">
-  <sub>v0.3.3 · Construit avec FastAPI, SQLite et le SDK garminconnect.<br/>Licence MIT.</sub>
+  <sub>v0.3.4 · Construit avec FastAPI, SQLite et le SDK garminconnect.<br/>Licence MIT.</sub>
 </p>

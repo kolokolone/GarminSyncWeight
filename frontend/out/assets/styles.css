@@ -61,7 +61,7 @@ body {
 
 .brand { display: flex; gap: 12px; align-items: center; color: var(--text); text-decoration: none; }
 .brand small { display: block; color: var(--muted); margin-top: 2px; }
-.brand .version { font-size: 0.65em; color: var(--dim); margin-top: 0; }
+.brand > .version { font-size: 0.8em; color: var(--muted); white-space: nowrap; }
 .brand-mark {
   display: grid;
   place-items: center;

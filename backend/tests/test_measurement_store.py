@@ -3,6 +3,7 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -160,3 +161,128 @@ class TestEdgeCases:
         result = store.get_by_id("g1")
         assert result is not None
         assert result.weight_kg == Decimal("78.5")  # original preserved
+
+
+# ─── FETCH STALENESS & FORCE_REFRESH ────────────────────────────
+
+
+class TestFetchStalenessAndForceRefresh:
+    """Tests for _fetch_withings_measurements staleness and force_refresh."""
+
+    async def test_force_refresh_bypasses_store(
+        self, store: WithingsMeasurementStore, settings
+    ) -> None:
+        """force_refresh=True must call the API even when store has data."""
+        from app.api.routes_measurements import _fetch_withings_measurements
+
+        store.save_measurements([_make_meas("g1", "2026-06-28", "78.5")])
+
+        wclient = AsyncMock()
+        wclient.get_measurements.return_value = []
+        parser = MagicMock()
+        parser.parse_measure_groups.return_value = []
+
+        end = datetime.now(UTC)
+        start = end - timedelta(days=30)
+
+        await _fetch_withings_measurements(
+            wclient, parser, store, start, end,
+            force_refresh=True, settings=settings,
+        )
+
+        wclient.get_measurements.assert_called_once()
+        parser.parse_measure_groups.assert_called_once()
+
+    async def test_no_last_sync_calls_api(
+        self, store: WithingsMeasurementStore, settings, sync_store
+    ) -> None:
+        """No prior sync → should bypass store and call API."""
+        from app.api.routes_measurements import _fetch_withings_measurements
+
+        store.save_measurements([_make_meas("g1", "2026-06-28", "78.5")])
+
+        wclient = AsyncMock()
+        wclient.get_measurements.return_value = []
+        parser = MagicMock()
+        parser.parse_measure_groups.return_value = []
+
+        end = datetime.now(UTC)
+        start = end - timedelta(days=30)
+
+        await _fetch_withings_measurements(
+            wclient, parser, store, start, end,
+            settings=settings,
+        )
+
+        wclient.get_measurements.assert_called_once()
+
+    async def test_recent_sync_uses_store(
+        self, store: WithingsMeasurementStore, settings, sync_store
+    ) -> None:
+        """Recent sync (< 2j) → store should be used, API NOT called."""
+        from app.api.routes_measurements import _fetch_withings_measurements
+
+        # Create a recent completed sync job
+        sync_store.create_job("2026-06-28", "2026-06-28", trigger="test")
+        # finish_job requires a run_id — we need to get it from create_job
+        # Instead, directly insert a completed job
+        now = datetime.now(UTC).isoformat()
+        sync_store.conn.execute(
+            """INSERT INTO sync_jobs
+               (run_id, started_at, start_date, end_date, trigger, status, completed_at)
+               VALUES (?, ?, ?, ?, ?, 'completed', ?)""",
+            ("test_recent", now, "2026-06-28", "2026-06-28", "test", now),
+        )
+        sync_store.conn.commit()
+
+        store.save_measurements([_make_meas("g1", "2026-06-28", "78.5")])
+
+        wclient = AsyncMock()
+        wclient.get_measurements.return_value = []
+        parser = MagicMock()
+        parser.parse_measure_groups.return_value = []
+
+        end = datetime.now(UTC)
+        start = end - timedelta(days=30)
+
+        result, count = await _fetch_withings_measurements(
+            wclient, parser, store, start, end,
+            settings=settings,
+        )
+
+        wclient.get_measurements.assert_not_called()
+        assert len(result) == 1
+        assert result[0].source_measure_group_id == "g1"
+
+    async def test_stale_sync_calls_api(
+        self, store: WithingsMeasurementStore, settings, sync_store
+    ) -> None:
+        """Stale sync (> 2j) → should call API, not use store."""
+        from app.api.routes_measurements import _fetch_withings_measurements
+
+        # Create a completed sync job from 3 days ago
+        stale_time = (datetime.now(UTC) - timedelta(days=3)).isoformat()
+        sync_store.conn.execute(
+            """INSERT INTO sync_jobs
+               (run_id, started_at, start_date, end_date, trigger, status, completed_at)
+               VALUES (?, ?, ?, ?, ?, 'completed', ?)""",
+            ("test_stale", stale_time, "2026-06-25", "2026-06-25", "test", stale_time),
+        )
+        sync_store.conn.commit()
+
+        store.save_measurements([_make_meas("g1", "2026-06-28", "78.5")])
+
+        wclient = AsyncMock()
+        wclient.get_measurements.return_value = []
+        parser = MagicMock()
+        parser.parse_measure_groups.return_value = []
+
+        end = datetime.now(UTC)
+        start = end - timedelta(days=30)
+
+        await _fetch_withings_measurements(
+            wclient, parser, store, start, end,
+            settings=settings,
+        )
+
+        wclient.get_measurements.assert_called_once()
