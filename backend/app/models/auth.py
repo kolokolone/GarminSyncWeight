@@ -32,16 +32,14 @@ class GarminAuthResult(BaseModel):
     """Result of a Garmin auth attempt."""
 
     ok: bool = False
-    assisted: bool = False
     needs_otp: bool = False
     message: str = ""
-    command: list[str] | None = None
     status: GarminAuthStatus
     auth_session_id: str | None = None  # For step 2 of MFA flow
     error_code: str | None = None
     # Values: "invalid_credentials", "otp_required", "otp_invalid",
-    #   "otp_expired", "timeout", "garmin_unavailable",
-    #   "already_connected", "disconnected", "verify_failed"
+    #   "otp_expired", "otp_locked", "rate_limited", "garmin_unavailable",
+    #   "token_write_failed", "verify_failed"
 
 
 class DisconnectRequest(BaseModel):

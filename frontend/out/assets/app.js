@@ -2021,23 +2021,25 @@ Dernière vérification: ${w.message || "—"}</pre></div>`;
     loginForm.className = "form";
     loginForm.style.marginTop = "12px";
     loginForm.innerHTML = `
-      <label>Email Garmin<input id="g-email" autocomplete="username" /></label>
+      <label>Email Garmin<input id="g-email" type="email" inputmode="email" autocomplete="username" /></label>
       <label>Mot de passe<input id="g-pass" type="password" autocomplete="current-password" /></label>
       <div class="actions">
         <button id="g-login-btn">Connecter Garmin</button>
-        <button id="g-assisted-btn" class="secondary">Assisté</button>
       </div>
       <textarea id="g-output" readonly style="min-height:60px"></textarea>
     `;
-    // OTP block (step 2 — hidden by default)
+    // OTP block (step 2 — hidden until Garmin sends a code)
     const otpBlock = document.createElement("div");
     otpBlock.id = "g-otp-block";
     otpBlock.style.display = "none";
     otpBlock.style.marginTop = "12px";
     otpBlock.innerHTML = `
-      <p style="color:var(--amber);font-size:13px">Garmin demande un code de vérification. Saisis le code reçu, puis valide la connexion.</p>
-      <label>Code OTP Garmin<input id="g-otp" autocomplete="one-time-code" /></label>
-      <button id="g-otp-btn">Valider le code OTP et connecter Garmin</button>
+      <p style="color:var(--amber);font-size:13px">Garmin demande un code de vérification. Saisis le code reçu par email. La session expire au bout de 5 minutes.</p>
+      <label>Code de vérification<input id="g-otp" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="123456" /></label>
+      <div class="actions">
+        <button id="g-otp-btn" type="button">Valider le code et connecter Garmin</button>
+        <button id="g-otp-cancel-btn" class="secondary" type="button">Recommencer</button>
+      </div>
       <p id="g-otp-error" style="color:var(--red);font-size:12px;display:none"></p>
     `;
     loginForm.append(otpBlock);
@@ -2045,63 +2047,116 @@ Dernière vérification: ${w.message || "—"}</pre></div>`;
 
     let _otpSessionId = null;
 
+    const showOtpError = (message) => {
+      const err = $("#g-otp-error");
+      if (!err) return;
+      err.textContent = message || "";
+      err.style.display = message ? "block" : "none";
+    };
+
+    const resetOtp = () => {
+      _otpSessionId = null;
+      const block = $("#g-otp-block");
+      if (block) block.style.display = "none";
+      const otp = $("#g-otp");
+      if (otp) otp.value = "";
+      showOtpError("");
+    };
+
+    const setBusy = (busy) => {
+      for (const id of ["g-login-btn", "g-otp-btn", "g-otp-cancel-btn"]) {
+        const button = document.getElementById(id);
+        if (button) button.disabled = busy;
+      }
+    };
+
+    const submitOtp = async () => {
+      if (!_otpSessionId) {
+        showOtpError("Session expirée. Recommence la connexion.");
+        return;
+      }
+      const otp = ($("#g-otp")?.value || "").trim();
+      if (!otp) {
+        showOtpError("Saisis le code reçu par email.");
+        return;
+      }
+      setBusy(true);
+      showOtpError("");
+      try {
+        const r = await api("/api/garmin/auth/login", {
+          method: "POST",
+          body: JSON.stringify({ auth_session_id: _otpSessionId, otp }),
+        });
+        const out = $("#g-output");
+        if (out) out.value = r.message || "";
+        if (r.ok) {
+          resetOtp();
+          await safeRefresh();
+          render();
+          return;
+        }
+        const terminalCodes = ["otp_expired", "otp_locked", "verify_failed", "token_write_failed"];
+        if (terminalCodes.includes(r.error_code)) {
+          resetOtp();
+        } else {
+          const field = $("#g-otp");
+          if (field) { field.value = ""; field.focus(); }
+        }
+        showOtpError(r.message || "Validation du code impossible.");
+      } catch (e) {
+        showOtpError(e.message);
+      } finally {
+        setBusy(false);
+      }
+    };
+
     setTimeout(() => {
-      // Step 1: send email + password, detect MFA
+      // Step 1: send email + password, let the backend request the OTP
       $("#g-login-btn")?.addEventListener("click", async () => {
         const out = $("#g-output");
+        const email = ($("#g-email")?.value || "").trim();
+        const pass = $("#g-pass")?.value || "";
+        if (!email || !pass) {
+          out.value = "Email et mot de passe Garmin requis.";
+          return;
+        }
+        setBusy(true);
+        showOtpError("");
         try {
-          const email = $("#g-email").value || null;
-          const pass = $("#g-pass").value || null;
           const r = await api("/api/garmin/auth/login", {
             method: "POST",
             body: JSON.stringify({ email, password: pass }),
           });
-          out.value = r.message || JSON.stringify(r, null, 2);
+          out.value = r.message || "";
           if (r.needs_otp && r.auth_session_id) {
             _otpSessionId = r.auth_session_id;
-            const ob = document.getElementById("g-otp-block");
-            if (ob) ob.style.display = "block";
+            const block = $("#g-otp-block");
+            if (block) block.style.display = "block";
+            const field = $("#g-otp");
+            if (field) { field.value = ""; field.focus(); }
           } else {
             await safeRefresh();
             render();
-          }
-        } catch (e) { out.value = e.message; }
-      });
-
-      // Step 2: send auth_session_id + OTP
-      $("#g-otp-btn")?.addEventListener("click", async () => {
-        const out = $("#g-output");
-        const err = $("#g-otp-error");
-        try {
-          const r = await api("/api/garmin/auth/login", {
-            method: "POST",
-            body: JSON.stringify({
-              auth_session_id: _otpSessionId,
-              otp: $("#g-otp").value || null,
-            }),
-          });
-          out.value = r.message || JSON.stringify(r, null, 2);
-          if (r.ok) {
-            const ob = document.getElementById("g-otp-block");
-            if (ob) ob.style.display = "none";
-            if (err) err.style.display = "none";
-            await safeRefresh();
-            render();
-          } else {
-            if (err) { err.textContent = r.message; err.style.display = "block"; }
           }
         } catch (e) {
           out.value = e.message;
-          if (err) { err.textContent = e.message; err.style.display = "block"; }
+        } finally {
+          setBusy(false);
         }
       });
 
-      $("#g-assisted-btn")?.addEventListener("click", async () => {
-        const out = $("#g-output");
-        try {
-          const r = await api("/api/garmin/auth/reauthenticate", { method: "POST", body: "{}" });
-          out.value = r.command ? `Exécute cette commande dans ton terminal :\n${r.command.join(" ")}` : (r.message || JSON.stringify(r, null, 2));
-        } catch (e) { out.value = e.message; }
+      // Step 2: send auth_session_id + OTP
+      $("#g-otp-btn")?.addEventListener("click", submitOtp);
+      $("#g-otp")?.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          submitOtp();
+        }
+      });
+      $("#g-otp-cancel-btn")?.addEventListener("click", () => {
+        resetOtp();
+        const email = $("#g-email");
+        if (email) email.focus();
       });
     }, 0);
   }
@@ -2123,7 +2178,7 @@ Dernière vérification: ${w.message || "—"}</pre></div>`;
   const gTech = document.createElement("details");
   gTech.className = "technical-details";
   const techInfo = {
-    "Méthode": "Taxuspt/garmin_mcp",
+    "Méthode": "garminconnect (MFA)",
     "État token": g.state || "unknown",
     "Token présent": g.token_found ? "oui" : "non",
     "Token valide": g.token_valid ? "oui" : "non",

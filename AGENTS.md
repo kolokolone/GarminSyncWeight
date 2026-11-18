@@ -49,7 +49,7 @@ backend/app/
   api/
     routes_status.py    ← GET /api/status (cached 60s)
     routes_auth.py      ← Withings OAuth2 flow + POST /api/withings/auth/config (writes .env)
-    routes_garmin_auth.py ← Garmin auth via Taxuspt/garmin_mcp
+    routes_garmin_auth.py ← Garmin auth via garminconnect (OTP 2-step)
     routes_sync.py      ← POST /api/sync/run + SSE streaming
     routes_logs.py      ← Log file viewer
     routes_measurements.py ← Measurement history/preview
@@ -59,7 +59,7 @@ backend/app/
     withings_client.py  ← POST /measure?action=getmeas
     withings_parser.py  ← Decode Withings value×10^unit, timezone-aware
     mapper.py           ← Withings fields → Garmin add_body_composition payload
-    garmin_auth_service.py ← garmin-mcp-auth subprocess management
+    garmin_auth_service.py ← garminconnect MFA login, token storage, in-memory OTP sessions
     garmin_client.py    ← garminconnect library wrapper (read weigh-ins, write body comp)
     deduplicator.py     ← Epsilon-based dedup (0.05kg duplicate, 0.2kg conflict)
     report_builder.py   ← JSON reports → runtime/reports/
@@ -163,14 +163,15 @@ Key helpers in conftest:
   1. Send `email` + `password` → returns `needs_otp: true` + `auth_session_id`
   2. Send `auth_session_id` + `otp` → completes authentication
   The legacy single-call (`email` + `password` + `otp` in one request) still works for backward compatibility.
-  Sessions are in-memory (TTL 5 min), not shared between workers.
+  Sessions are in-memory (TTL 5 min, max 3 OTP attempts), not shared between workers.
+  Credentials, OTP codes and SSO cookies are never persisted or logged; only tokens land in `~/.garminconnect`.
   `POST /api/garmin/auth/verify` only checks token validity — never submits OTP.
 - **Garmin lookback/forward windows.** Configurable via `GARMIN_LOOKBACK_DAYS` (default 7) and `GARMIN_LOOKAHEAD_DAYS` (default 1). Sync reads existing Garmin data within this window to detect duplicates/conflicts.
 - **Docker binding nuance.** Dockerfile uvicorn binds `0.0.0.0:8010`, but docker-compose maps to `127.0.0.1:8010`. The compose mapping is the effective bind — never remove the `127.0.0.1` restriction in compose.
 
 ## Version note
 
-`pyproject.toml` version 0.3.8 is canonical. Also hardcoded in `config.py` (`app_version`).
+`pyproject.toml` version 0.3.9 is canonical. Also hardcoded in `config.py` (`app_version`).
 When bumping: update pyproject.toml, backend/app/config.py, README.md,
 docs/DOCKER.md, and frontend/out/index.html (version badge).
 

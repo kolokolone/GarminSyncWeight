@@ -5,7 +5,7 @@ GarminSyncWeight est une application locale FastAPI + UI statique qui synchronis
 ```text
 Withings OAuth → WithingsClient(getmeas) → WithingsParser
     → WithingsToGarminMapper
-    → GarminClient(read existing via garminconnect tokens from Taxuspt/garmin_mcp)
+    → GarminClient(read existing via garminconnect tokens)
     → Deduplicator
     → GarminClient.add_body_composition
     → SyncStore + ReportBuilder
@@ -20,8 +20,8 @@ Withings OAuth → WithingsClient(getmeas) → WithingsParser
 | `withings_client.py` | Appels officiels `POST /measure action=getmeas` |
 | `withings_parser.py` | Décodage `value × 10^unit`, Europe/Paris, types Withings |
 | `mapper.py` | Mapping prudent vers champs Garmin supportés |
-| `garmin_auth_service.py` | `garmin-mcp-auth` et `garmin-mcp-auth --verify` |
-| `garmin_client.py` | Lecture/écriture Garmin avec tokens compatibles `Taxuspt/garmin_mcp` |
+| `garmin_auth_service.py` | Login garminconnect, MFA OTP en mémoire (TTL 5 min), vérification des tokens |
+| `garmin_client.py` | Lecture/écriture Garmin via `garminconnect` |
 | `deduplicator.py` | Doublons, conflits, idempotence locale |
 | `sync_engine.py` | Préchecks actifs, lectures, décisions, écritures, rapport |
 | `sync_store.py` | `sync_attempts` et `sync_events` SQLite |
@@ -32,7 +32,7 @@ Withings OAuth → WithingsClient(getmeas) → WithingsParser
 La synchronisation refuse d’écrire si :
 
 - Withings n’est pas configuré ou vérifié par appel API ;
-- Garmin n’est pas vérifié par `garmin-mcp-auth --verify` et appel actif ;
+- les tokens Garmin ne sont pas valides (login `garminconnect` + profil) ;
 - la lecture Withings échoue ;
 - la lecture Garmin échoue ;
 - le poids ou la date est absent ;
@@ -45,7 +45,7 @@ Décisions persistées : `synced`, `skipped_existing`, `skipped_conflict`, `inva
 ## Stockage
 
 - `data/withings_tokens.db` : tokens Withings, états OAuth, tentatives et résultats de sync.
-- `/home/app/.garminconnect` en Docker : tokens Garmin créés par `Taxuspt/garmin_mcp`.
+- `/home/app/.garminconnect` en Docker : tokens Garmin (`garmin_tokens.json`) créés par `garminconnect`.
 - `logs/` : logs structurés avec redaction.
 - `runtime/reports/` : rapports JSON.
 

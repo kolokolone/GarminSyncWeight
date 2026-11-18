@@ -36,10 +36,7 @@ class TestTTLCache:
 
     def test_ttl_expiry(self) -> None:
         c = TTLCache()
-        c.set("key", "value", ttl_seconds=0)  # expires immediately
-        # TTLCache.get() checks time.monotonic(), which should have advanced
-        # at least 1 tick, so the entry is already expired
-        time.sleep(0.01)
+        c.set("key", "value", ttl_seconds=-1)  # already expired
         assert c.get("key") is None
 
     def test_invalidate_all(self) -> None:

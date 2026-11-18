@@ -31,7 +31,7 @@ def login(
     auth: GarminAuthService = Depends(_get_garmin_auth),
     _admin: None = Depends(verify_admin_token),
 ) -> GarminAuthResult:
-    """Start or complete Garmin MCP authentication.
+    """Start or complete Garmin Connect authentication.
 
     Two-step MFA flow:
     1. POST {email, password} → response with auth_session_id (needs_otp=True)
@@ -44,15 +44,6 @@ def login(
 def verify(auth: GarminAuthService = Depends(_get_garmin_auth)) -> GarminAuthStatus:
     """Verify Garmin token validity."""
     return auth.status()
-
-
-@router.post("/reauthenticate", response_model=GarminAuthResult)
-def reauthenticate(
-    auth: GarminAuthService = Depends(_get_garmin_auth),
-    _admin: None = Depends(verify_admin_token),
-) -> GarminAuthResult:
-    """Return assisted Garmin auth command for reauthentication."""
-    return auth.login()
 
 
 @router.post("/disconnect", response_model=DisconnectResult)

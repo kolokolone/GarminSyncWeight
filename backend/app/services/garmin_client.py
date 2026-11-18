@@ -1,8 +1,8 @@
-"""Garmin Connect client compatible with Taxuspt/garmin_mcp tokens.
+"""Garmin Connect client.
 
-Garmin authentication is delegated to ``garmin-mcp-auth`` from
-https://github.com/Taxuspt/garmin_mcp. Runtime API calls use the same
-``python-garminconnect`` library and token directory expected by that connector.
+Authentication and token persistence are handled by
+:mod:`app.services.garmin_auth_service` through ``garminconnect``. Runtime API
+calls reuse the same library and token directory (``garmin_tokens.json``).
 """
 
 from datetime import date, timedelta
@@ -243,14 +243,11 @@ class GarminClient:
             from garminconnect import Garmin  # type: ignore[import-not-found]
         except Exception as exc:
             raise RuntimeError(
-                "Le client Garmin n'est pas installé. Installe Taxuspt/garmin_mcp "
-                "ou garminconnect, puis relance l'application."
+                "Le client Garmin n'est pas installé. Installe garminconnect, "
+                "puis relance l'application."
             ) from exc
         api = Garmin()
-        try:
-            api.login(tokenstore=str(self._settings.garmin_token_path))
-        except TypeError:
-            api.login()
+        api.login(tokenstore=str(self._settings.garmin_token_path))
         self._api = api
         return api
 

@@ -36,7 +36,7 @@ Tout calcul métier, toute validation, toute décision, tout appel à une API ex
 | Responsabilité | Composant |
 |---|---|
 | Authentification Withings (OAuth2) | `withings_auth.py` |
-| Authentification Garmin (garmin-mcp-auth) | `garmin_auth_service.py` |
+| Authentification Garmin (garminconnect + OTP) | `garmin_auth_service.py` |
 | Parsing des mesures Withings | `withings_parser.py` |
 | Mapping Withings → Garmin | `mapper.py` |
 | Déduplication | `deduplicator.py` |
@@ -93,7 +93,7 @@ Réponse si MFA requis :
   "needs_otp": true,
   "auth_session_id": "uuid-...",
   "error_code": "otp_required",
-  "message": "Code MFA Garmin requis."
+  "message": "Code de vérification Garmin envoyé par email. Saisis-le pour terminer la connexion."
 }
 ```
 
@@ -125,15 +125,19 @@ Réponse si succès :
 | `error_code` | Cause | Action |
 |---|---|---|
 | `otp_required` | MFA activé sur le compte Garmin | Afficher le champ OTP |
-| `otp_invalid` | Code OTP incorrect | Demander de ressaisir |
-| `otp_expired` | Session de 5 minutes expirée | Recommencer depuis l'étape 1 |
-| `timeout` | `garmin-mcp-auth` n'a pas répondu | Réessayer |
+| `otp_invalid` | Code OTP incorrect | Effacer le champ et demander de ressaisir |
+| `otp_expired` | Session de 5 minutes expirée | Masquer le champ OTP, recommencer depuis l'étape 1 |
+| `otp_locked` | 3 codes incorrects | Masquer le champ OTP, recommencer depuis l'étape 1 |
+| `rate_limited` | Garmin limite les tentatives | Attendre quelques minutes |
+| `garmin_unavailable` | Réseau ou service Garmin indisponible | Réessayer |
+| `verify_failed` | Tokens écrits mais rejetés à la vérification | Recommencer depuis l'étape 1 |
 | `invalid_credentials` | Email ou mot de passe incorrect | Corriger les identifiants |
 
 ### Données à ne pas logger
 
-- Le mot de passe Garmin est passé via variable d'environnement au subprocess, jamais écrit dans un fichier.
-- L'OTP est écrit dans le stdin du subprocess, jamais persisté.
+- Le mot de passe Garmin n'est utilisé qu'en mémoire pendant l'appel `garminconnect`, jamais écrit dans un fichier.
+- L'OTP est transmis à `garminconnect.resume_login()` puis oublié ; il n'est jamais persisté.
+- La session MFA (cookies SSO) reste en mémoire côté serveur, sous un identifiant opaque, 5 minutes maximum.
 - `RedactingJsonFormatter` nettoie automatiquement les logs.
 
 ---

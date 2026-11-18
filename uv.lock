@@ -253,21 +253,22 @@ wheels = [
 
 [[package]]
 name = "garminconnect"
-version = "0.3.6"
+version = "0.3.20"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "curl-cffi" },
     { name = "requests" },
+    { name = "tzdata", marker = "sys_platform == 'win32'" },
     { name = "ua-generator" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/24/29/f8e3609f22693020dec65d6285adf12daac459461a09e59dffe12ec7fc08/garminconnect-0.3.6.tar.gz", hash = "sha256:6f90aa282976f7dff880cf53ef4f3ea0d63701fd2a1488c628a66a2a027c2143", size = 61911, upload-time = "2026-06-14T08:05:37.349Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e1/bf/e947dcb466f96c063b83493a375a5139534fedcc86509287fbf8463335b2/garminconnect-0.3.20.tar.gz", hash = "sha256:1e156f4242bc4214d5d86788503b2d5ebd92a14698dbd3906f765f06eaac551c", size = 168748, upload-time = "2026-10-23T11:32:11.163Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ab/f9/6d69eb2eab9f62ed7e415a606c5ef63e19f27e561d15d7ac7d651997cfad/garminconnect-0.3.6-py3-none-any.whl", hash = "sha256:e05782ab90e63cb9c023407899e2d12dd18132316fd84394ebecd393809d4ffe", size = 57555, upload-time = "2026-06-14T08:05:36.027Z" },
+    { url = "https://files.pythonhosted.org/packages/09/9d/4ef1a87a45278c1e2854f5b301ff944059e31f116eb50704324f0bc0f4ed/garminconnect-0.3.20-py3-none-any.whl", hash = "sha256:d56a1720dff5f4d64be5f105d082bb6b546480a1920f901f1523c19aa76791fc", size = 163422, upload-time = "2026-10-23T11:32:09.468Z" },
 ]
 
 [[package]]
 name = "garminsyncweight"
-version = "0.3.8"
+version = "0.3.9"
 source = { virtual = "." }
 dependencies = [
     { name = "aiosqlite" },
@@ -292,7 +293,7 @@ dev = [
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20.0" },
     { name = "fastapi", specifier = ">=0.116.0" },
-    { name = "garminconnect", specifier = ">=0.3.2" },
+    { name = "garminconnect", specifier = ">=0.3.20" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "pydantic", specifier = ">=2.11.0" },
     { name = "pydantic-settings", specifier = ">=2.7.0" },

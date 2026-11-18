@@ -392,7 +392,7 @@ Les détails techniques doivent rester accessibles mais non prioritaires.
 À mettre dans les détails techniques :
 
 - MCP ;
-- Taxuspt/garmin_mcp ;
+- garminconnect ;
 - token_dir ;
 - payload JSON ;
 - méthode `add_body_composition` ;
@@ -440,7 +440,7 @@ Garmin prêt pour la synchronisation
 Ne pas utiliser en titre principal :
 
 ```text
-Garmin MCP Taxuspt connected
+GarminConnect token connected
 ```
 
 Cette information doit être dans les détails techniques.
@@ -494,7 +494,7 @@ Ne pas :
 - transformer l’app en interface blanche ;
 - remplacer les cartes translucides par des cards plates génériques ;
 - afficher les JSON comme contenu principal ;
-- mettre MCP/Taxuspt en information principale ;
+- mettre garminconnect en information principale ;
 - multiplier les animations ;
 - ajouter des icônes décoratives sans fonction ;
 - créer une UI différente page par page ;

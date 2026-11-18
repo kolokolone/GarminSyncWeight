@@ -16,7 +16,7 @@ GarminSyncWeight manipule des données de santé, des tokens OAuth et des creden
 Variables sensibles :
 
 - `WITHINGS_CLIENT_SECRET`
-- `GARMIN_EMAIL`, `GARMIN_PASSWORD`, OTP/MFA uniquement pendant l'appel d'authentification
+- email/mot de passe Garmin et codes OTP : uniquement en mémoire pendant l'appel d'authentification, jamais persistés
 - tokens Withings dans SQLite
 - tokens Garmin dans `.garminconnect`
 
@@ -24,16 +24,9 @@ Redaction automatique : `access_token`, `refresh_token`, `client_secret`, `Autho
 
 ## Garmin
 
-GarminSyncWeight utilise `Taxuspt/garmin_mcp` pour l'authentification. En Docker, `garmin-mcp-auth` est installé directement dans l'image (pas de téléchargement GitHub au runtime).
+GarminSyncWeight utilise directement l'API MFA de `garminconnect` (email + mot de passe → code OTP → tokens), sans sous-processus ni téléchargement GitHub au runtime.
 
-Pour le développement local :
-
-```powershell
-uvx --python 3.12 --from git+https://github.com/Taxuspt/garmin_mcp garmin-mcp-auth
-uvx --python 3.12 --from git+https://github.com/Taxuspt/garmin_mcp garmin-mcp-auth --verify
-```
-
-Le backend ne stocke pas le mot de passe Garmin. Les tokens sont persistés dans `.garminconnect`.
+Le backend ne stocke ni le mot de passe ni les codes OTP. La session MFA (cookies SSO) reste en mémoire sous un identifiant opaque pendant 5 minutes maximum, avec 3 tentatives par session. Seuls les tokens sont persistés dans `.garminconnect` (`garmin_tokens.json`, permissions 0600).
 
 ## Withings
 

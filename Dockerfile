@@ -5,7 +5,7 @@ WORKDIR /app
 
 # ── System dependencies ────────────────────────────────────
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl git \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Install uv ─────────────────────────────────────────────
@@ -15,12 +15,6 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 # Copy only dependency files first for layer caching
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
-
-# ── Install garmin_mcp pinned ──────────────────────────────
-# ARG can be overridden at build time: --build-arg GARMIN_MCP_REF=<commit-sha>
-ARG GARMIN_MCP_REF=main
-RUN uv pip install --system \
-    "garmin_mcp @ git+https://github.com/Taxuspt/garmin_mcp@${GARMIN_MCP_REF}"
 
 # ── Copy application code ──────────────────────────────────
 COPY backend ./backend

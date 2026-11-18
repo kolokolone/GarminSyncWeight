@@ -149,7 +149,6 @@ PROTECTED_ROUTES = [
     ("POST", "/api/withings/auth/disconnect", None),
     ("POST", "/api/withings/auth/test", None),
     ("POST", "/api/garmin/auth/login", {"email": "x", "password": "y", "otp": ""}),
-    ("POST", "/api/garmin/auth/reauthenticate", None),
     ("POST", "/api/garmin/auth/disconnect", {"confirm": True}),
     ("POST", "/api/sync/run", {"start_date": "2026-06-01", "end_date": "2026-06-01"}),
     ("POST", "/api/sync", {"start_date": "2026-06-01", "end_date": "2026-06-01"}),

@@ -1,7 +1,7 @@
 # Déploiement Docker — GarminSyncWeight
 
 Documentation complète pour déployer GarminSyncWeight avec Docker Compose.
-Dernière mise à jour : version 0.3.8.
+Dernière mise à jour : version 0.3.9.
 
 ## Prérequis
 
@@ -133,14 +133,14 @@ ADMIN_API_TOKEN=mon_token_secret
 
 ## Authentification Garmin
 
-L'image Docker contient `garmin-mcp-auth` installé localement (pas de téléchargement GitHub au runtime).
+L'authentification utilise directement l'API MFA de `garminconnect` (aucun sous-processus ni téléchargement GitHub au runtime).
 
 1. Dans l'interface web, allez dans Réglages → Garmin
 2. Saisissez votre email et mot de passe Garmin
-3. Si l'authentification à deux facteurs est activée, saisissez le code OTP
-4. Les tokens sont stockés dans `/home/app/.garminconnect` (volume `garminsync_garmin`)
+3. Si Garmin envoie un code de vérification, saisissez-le dans le champ OTP affiché
+4. Les tokens sont stockés dans `/home/app/.garminconnect` (`garmin_tokens.json`, volume `garminsync_garmin`)
 
-Le mot de passe Garmin n'est **jamais** conservé. Seuls les tokens de session sont persistés.
+Le mot de passe Garmin n'est **jamais** conservé. La session OTP est gardée en mémoire pendant 5 minutes maximum (TTL, 3 tentatives), jamais dans le navigateur ni dans les logs.
 
 ## Protection des routes sensibles (ADMIN_API_TOKEN)
 
@@ -176,7 +176,7 @@ curl http://IP_DU_SERVEUR:8010/api/healthz
 
 # Vérifier le statut métier (interface utilisateur)
 curl http://IP_DU_SERVEUR:8010/api/status
-# → {"app_name":"GarminSyncWeight","version":"0.3.8","state":"ready",...}
+# → {"app_name":"GarminSyncWeight","version":"0.3.9","state":"ready",...}
 ```
 
 **Important** : Le conteneur ne sera jamais marqué `unhealthy` parce que Withings ou Garmin est temporairement indisponible. Si le healthcheck échoue, c'est un problème de déploiement (dossier manquant, application crashée).
@@ -197,7 +197,7 @@ docker compose ps
 Pour figer une version spécifique, remplacez `latest` par un tag de version dans `docker-compose.yml` :
 
 ```yaml
-image: ghcr.io/kolokolone/garminsyncweight:0.3.8
+image: ghcr.io/kolokolone/garminsyncweight:0.3.9
 ```
 
 ## Sauvegarde et restauration
@@ -311,8 +311,7 @@ docker compose restart
 
 L'image est basée sur `python:3.12-slim`. Elle contient :
 
-- Les dépendances Python installées via `uv sync --frozen` (versions exactes du `uv.lock`)
-- `garmin-mcp-auth` installé depuis GitHub (commit figé au build)
+- Les dépendances Python installées via `uv sync --frozen` (versions exactes du `uv.lock`), dont `garminconnect`
 - Le backend FastAPI dans `/app/backend`
 - Le frontend statique dans `/app/frontend/out`
 

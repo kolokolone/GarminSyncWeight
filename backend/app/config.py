@@ -6,7 +6,6 @@ Secrets (client_secret, tokens) are never logged or exposed in status.
 
 from functools import lru_cache
 from pathlib import Path
-from shlex import split
 from typing import Literal
 
 from pydantic import Field, field_validator
@@ -34,18 +33,8 @@ class Settings(BaseSettings):
     app_timezone: str = "Europe/Paris"
     user_height_m: float | None = None
 
-    # ─── Garmin authentication / Taxuspt garmin_mcp ───────────
-    garmin_mcp_source: str = "git+https://github.com/Taxuspt/garmin_mcp"
+    # ─── Garmin authentication ────────────────────────────────
     garmin_token_dir: Path = Field(default=Path.home() / ".garminconnect")
-    garmin_auth_command: str = (
-        "uvx --python 3.12 --from git+https://github.com/Taxuspt/garmin_mcp garmin-mcp-auth"
-    )
-    garmin_verify_command: str = (
-        "uvx --python 3.12 --from git+https://github.com/Taxuspt/garmin_mcp "
-        "garmin-mcp-auth --verify"
-    )
-    garmin_auth_timeout_seconds: int = 60
-    garmin_verify_timeout_seconds: int = 20
 
     # ─── Paths ────────────────────────────────────────────────
     data_dir: Path = Field(default=Path("./data"))
@@ -70,7 +59,7 @@ class Settings(BaseSettings):
     log_format: Literal["jsonl", "text"] = "jsonl"
 
     # ─── Version ──────────────────────────────────────────────
-    app_version: str = "0.3.8"
+    app_version: str = "0.3.9"
 
     @field_validator("app_host")
     @classmethod
@@ -102,14 +91,6 @@ class Settings(BaseSettings):
     def garmin_token_path(self) -> Path:
         p = self.garmin_token_dir.expanduser()
         return p if p.is_absolute() else (Path.cwd() / p).resolve()
-
-    @property
-    def garmin_auth_args(self) -> list[str]:
-        return split(self.garmin_auth_command)
-
-    @property
-    def garmin_verify_args(self) -> list[str]:
-        return split(self.garmin_verify_command)
 
     def ensure_directories(self) -> None:
         dirs = (

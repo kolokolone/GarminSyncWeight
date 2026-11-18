@@ -232,15 +232,16 @@ class TestFetchStalenessAndForceRefresh:
         )
         sync_store.conn.commit()
 
-        store.save_measurements([_make_meas("g1", "2026-06-28", "78.5")])
+        end = datetime.now(UTC)
+        start = end - timedelta(days=30)
+        store.save_measurements(
+            [_make_meas("g1", (end - timedelta(days=1)).date().isoformat(), "78.5")]
+        )
 
         wclient = AsyncMock()
         wclient.get_measurements.return_value = []
         parser = MagicMock()
         parser.parse_measure_groups.return_value = []
-
-        end = datetime.now(UTC)
-        start = end - timedelta(days=30)
 
         result, count = await _fetch_withings_measurements(
             wclient, parser, store, start, end,

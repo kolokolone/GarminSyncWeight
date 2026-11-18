@@ -76,7 +76,6 @@ def _cmd_check_config(settings: "Settings") -> None:
     print(f"  APP_TIMEZONE:        {settings.app_timezone}")
     print(f"  USER_HEIGHT_M:       {settings.user_height_m or 'not set'}")
     print(f"  WITHINGS_SCOPE:      {settings.withings_scope}")
-    print(f"  GARMIN_MCP_SOURCE:   {settings.garmin_mcp_source}")
     print(f"  GARMIN_TOKEN_DIR:    {settings.garmin_token_path}")
     print(f"  DATA_DIR:            {settings.resolved_data_dir}")
     print(f"  LOG_DIR:             {settings.resolved_log_dir}")

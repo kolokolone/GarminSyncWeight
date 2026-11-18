@@ -92,16 +92,15 @@ Prérequis : Python ≥ 3.12, [`uv`](https://docs.astral.sh/uv/).
 
 Le refresh token est rotatif — chaque renouvellement est persisté automatiquement.
 
-### Garmin (via Taxuspt/garmin_mcp)
+### Garmin (via garminconnect)
 
-En Docker, `garmin-mcp-auth` est installé directement dans l'image. Pour le développement local :
+L'authentification utilise directement l'API MFA officielle de `garminconnect` :
 
-```powershell
-uvx --python 3.12 --from git+https://github.com/Taxuspt/garmin_mcp garmin-mcp-auth
-uvx --python 3.12 --from git+https://github.com/Taxuspt/garmin_mcp garmin-mcp-auth --verify
-```
+1. Saisissez votre email et mot de passe dans **Réglages → Garmin Connect**
+2. Si Garmin envoie un code de vérification, saisissez-le dans le champ OTP affiché
+3. Les tokens sont enregistrés dans `~/.garminconnect` (`garmin_tokens.json`)
 
-Les tokens sont stockés dans `~/.garminconnect`. Le mot de passe Garmin n'est **jamais** conservé par l'application.
+Le mot de passe n'est **jamais** conservé. La session OTP reste en mémoire côté serveur pendant 5 minutes maximum, puis est supprimée. Les codes OTP et les cookies SSO ne sont jamais journalisés.
 
 ## Utilisation
 
@@ -210,5 +209,5 @@ Le `PYTHONPATH` doit pointer vers `backend/` — les scripts le font automatique
 ---
 
 <p align="center">
-  <sub>v0.3.8 · Construit avec FastAPI, SQLite et le SDK garminconnect.<br/>Image Docker : ghcr.io/kolokolone/garminsyncweight<br/>Licence MIT.</sub>
+  <sub>v0.3.9 · Construit avec FastAPI, SQLite et le SDK garminconnect.<br/>Image Docker : ghcr.io/kolokolone/garminsyncweight<br/>Licence MIT.</sub>
 </p>
